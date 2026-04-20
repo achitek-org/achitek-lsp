@@ -1,5 +1,5 @@
 {
-  description = "Achitek Lsp Server";
+  description = "Achitek dev env";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -29,36 +29,28 @@
         nix-lsp-server = nil.packages.${system}.nil;
       in
       {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "kopye";
-          version = "0.0.0";
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-          };
-          src = pkgs.lib.cleanSource ./.;
-          # https://github.com/sfackler/rust-openssl/issues/948
-          nativeBuildInputs = [
-            pkgs.pkg-config
-          ];
-          buildInputs = [
-            pkgs.openssl.dev
-            pkgs.libiconv
-          ];
-          OPENSSL_STATIC = "0";
-          OPENSSL_INCLUDE_DIR =
-            (pkgs.lib.makeSearchPathOutput "dev" "include" [ pkgs.openssl.dev ]) + "/openssl";
-        };
         devShells.default =
           with pkgs;
           mkShell {
             buildInputs = [
-              nix-lsp-server
               cargo-nextest
-              rust-analyzer
+              cargo-watch
+              just
+              natscli
+              nix-lsp-server
               openssl
               pkg-config # needed by openssl to locate headers and libraries
+              rust-analyzer
               rust-bin.stable.latest.default
+              lefthook
+              just
             ];
+
+            shellHook = ''
+              if [ ! -f .git/hooks/pre-commit ]; then
+                lefthook install
+              fi
+            '';
           };
       }
     );
