@@ -1,9 +1,9 @@
 {
-  description = "Achitek dev env";
+  description = "Achitek Development Environment";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  inputs.rust-overlay.url = "github:oxalica/rust-overlay";
+  inputs.crane.url = "github:ipetkov/crane";
 
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
@@ -13,45 +13,115 @@
 
   outputs =
     {
+      self,
+      crane,
       nil,
       nixpkgs,
-      rust-overlay,
       flake-utils,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        overlays = [ (import rust-overlay) ];
-        pkgs = import nixpkgs {
-          inherit system overlays;
+        pkgs = nixpkgs.legacyPackages.${system};
+        craneLib = crane.mkLib pkgs;
+        serverCrate = craneLib.crateNameFromCargoToml {
+          cargoToml = ./server/Cargo.toml;
         };
+
         nix-lsp-server = nil.packages.${system}.nil;
+
+        commonArgs = {
+          src = craneLib.cleanCargoSource ./.;
+
+          pname = "achitek-ls";
+          inherit (serverCrate) version;
+          strictDeps = true;
+
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [ pkgs.openssl ];
+        };
+
+        cargoArtifacts = craneLib.buildDepsOnly (
+          commonArgs
+          // {
+            pname = "achitek-ls";
+          }
+        );
+
+        achitek-ls-clippy = craneLib.cargoClippy (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+            cargoClippyExtraArgs = "--all-targets --all-features -- --deny warnings";
+          }
+        );
+
+        achitek-ls-test = craneLib.cargoNextest (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+            cargoNextestExtraArgs = "--workspace --all-features";
+          }
+        );
+
+        achitek-ls = craneLib.buildPackage (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+            cargoExtraArgs = "-p server --bin achitek-ls";
+          }
+        );
       in
       {
-        devShells.default =
-          with pkgs;
-          mkShell {
-            buildInputs = [
-              cargo-nextest
-              cargo-watch
-              just
-              natscli
-              nix-lsp-server
-              openssl
-              pkg-config # needed by openssl to locate headers and libraries
-              rust-analyzer
-              rust-bin.stable.latest.default
-              lefthook
-              just
-            ];
+        packages = {
+          default = achitek-ls;
+          achitek-ls = achitek-ls;
+        };
 
-            shellHook = ''
-              if [ ! -f .git/hooks/pre-commit ]; then
-                lefthook install
-              fi
-            '';
+        apps = {
+          default = flake-utils.lib.mkApp {
+            drv = achitek-ls;
+            name = "achitek-ls";
           };
+          achitek-ls = flake-utils.lib.mkApp {
+            drv = achitek-ls;
+            name = "achitek-ls";
+          };
+        };
+
+        checks = {
+          inherit
+            achitek-ls
+            achitek-ls-clippy
+            achitek-ls-test
+            ;
+
+          default = achitek-ls;
+        };
+
+        devShells.default = craneLib.devShell {
+          checks = self.checks.${system};
+
+          packages = with pkgs; [
+            achitek-ls
+            cargo-nextest
+            cargo-watch
+            just
+            natscli
+            nix-lsp-server
+            openssl
+            pkg-config # needed by openssl to locate headers and libraries
+            rust-analyzer
+            lefthook
+          ];
+
+          shellHook = ''
+            if [ ! -f .git/hooks/pre-commit ]; then
+              lefthook install
+            fi
+          '';
+        };
       }
     );
 }

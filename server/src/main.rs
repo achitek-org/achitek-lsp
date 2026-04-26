@@ -618,6 +618,7 @@ impl Server {
         Ok(Some(locations))
     }
 
+    #[allow(clippy::mutable_key_type)]
     fn rename(
         &self,
         uri: &Uri,
@@ -1739,6 +1740,7 @@ debug = 0
     }
 
     #[test]
+    #[allow(clippy::mutable_key_type)]
     fn rename_returns_workspace_edits_for_achitekfile_and_templates() -> anyhow::Result<()> {
         let temp_root = std::env::temp_dir().join(format!(
             "achitek-rename-{}",
