@@ -879,15 +879,14 @@ fn references_for_position(
 
     let mut references = Vec::new();
 
-    if include_declaration {
-        if let Some(symbol) = symbols
+    if include_declaration
+        && let Some(symbol) = symbols
             .iter()
             .find(|symbol| symbol.kind() == SymbolKind::Prompt && symbol.name() == name)
-        {
-            references.push(ReferenceTarget {
-                range: symbol.selection_range(),
-            });
-        }
+    {
+        references.push(ReferenceTarget {
+            range: symbol.selection_range(),
+        });
     }
 
     collect_reference_nodes(syntax.root_node(), syntax, name, &mut references);
@@ -1026,10 +1025,7 @@ fn in_blueprint_block(syntax: &SyntaxTree, position: syntax::TextPosition) -> bo
     ancestor_kinds_at_position(syntax, position).contains(&"blueprint_block")
 }
 
-fn ancestor_kinds_at_position<'a>(
-    syntax: &'a SyntaxTree,
-    position: syntax::TextPosition,
-) -> Vec<&'a str> {
+fn ancestor_kinds_at_position(syntax: &SyntaxTree, position: syntax::TextPosition) -> Vec<&str> {
     let point = tree_sitter::Point {
         row: position.row,
         column: position.column,

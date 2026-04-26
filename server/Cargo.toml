@@ -1,7 +1,18 @@
 [package]
-name = "server"
+name = "achitek-ls"
 version = "0.1.0"
+description = "Achitekfile Language Server"
 edition = "2024"
+repository = "https://github.com/achitek-org/achitek-ls"
+license = "MIT"
+
+[[bin]]
+name = "achitek-ls"
+path = "src/main.rs"
+
+[[bin]]
+name = "achitek-ls"
+path = "src/main.rs"
 
 [dependencies]
 analysis = { path = "../analysis" }
