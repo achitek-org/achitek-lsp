@@ -25,8 +25,8 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         craneLib = crane.mkLib pkgs;
-        serverCrate = craneLib.crateNameFromCargoToml {
-          cargoToml = ./server/Cargo.toml;
+        achitekLsCrate = craneLib.crateNameFromCargoToml {
+          cargoToml = ./Cargo.toml;
         };
 
         nix-lsp-server = nil.packages.${system}.nil;
@@ -35,7 +35,7 @@
           src = craneLib.cleanCargoSource ./.;
 
           pname = "achitek-ls";
-          inherit (serverCrate) version;
+          inherit (achitekLsCrate) version;
           strictDeps = true;
 
           nativeBuildInputs = [ pkgs.pkg-config ];
@@ -69,7 +69,7 @@
           commonArgs
           // {
             inherit cargoArtifacts;
-            cargoExtraArgs = "-p server --bin achitek-ls";
+            cargoExtraArgs = "--bin achitek-ls";
           }
         );
       in
