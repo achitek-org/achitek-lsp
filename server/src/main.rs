@@ -1348,14 +1348,14 @@ mod tests {
     use anyhow::Context;
     use lsp_server::{Request, RequestId};
     use lsp_types::{
-        ClientCapabilities, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolResponse,
-        GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-        InitializedParams, MarkupContent, Position, PrepareRenameResponse,
-        PublishDiagnosticsParams, ReferenceParams, RenameParams, TextDocumentContentChangeEvent,
-        TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
-        VersionedTextDocumentIdentifier, WorkspaceEdit, WorkspaceSymbolParams,
-        WorkspaceSymbolResponse,
+        notification::{
+            DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
+            Notification as _,
+        },
+        request::{
+            Completion, DocumentSymbolRequest, GotoDefinition, HoverRequest, Initialize,
+            PrepareRenameRequest, References, Rename, Request as _, WorkspaceSymbolRequest,
+        },
         notification::{
             DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
             Notification as _,
@@ -1835,39 +1835,21 @@ repository = "{{project_name}}"
         let achitek_changes = changes
             .get(&uri)
             .expect("rename should edit the Achitekfile");
-        assert!(
-            achitek_changes
-                .iter()
-                .any(|edit| edit.new_text == "\"repository_name\"")
-        );
-        assert!(
-            achitek_changes
-                .iter()
-                .any(|edit| edit.new_text == "repository_name")
-        );
+        assert!((|edit| edit.new_text == "\"repository_name\""));
+        assetek_changes    .iter()
+            let late_uri = path_to_uri(&template_path)?;
+        let late.expect("rename should edit matching templates");
+        asseq!(template_changes.len(), 2);
+        assetemplate_changes    .iter()
+            .all(|edit| edit.new_text == "repository_name"));
 
-        let template_uri = path_to_uri(&template_path)?;
-        let template_changes = changes
-            .get(&template_uri)
-            .expect("rename should edit matching templates");
-        assert_eq!(template_changes.len(), 2);
-        assert!(
-            template_changes
-                .iter()
-                .all(|edit| edit.new_text == "repository_name")
-        );
-
-        send_request(
-            &client_connection,
-            RequestId::from(12_i32),
-            "shutdown",
-            json!({}),
+        send_req&client_connection,
+            estId::from(12_i32),
+            tdown",    json!({}),
         )?;
-        let _ = recv_response(&client_connection)?;
-        send_notification_message(&client_connection, "exit", json!({}))?;
+        let _ = _notification_message(&client_connection, "exit", json!({}))?;
 
-        server_thread
-            .join()
+        servhread    .join()
             .expect("server thread should not panic")
             .context("server loop should exit cleanly")?;
 
