@@ -8,49 +8,53 @@
 //! this can jump from a prompt interpolation back to the matching Achitekfile
 //! prompt declaration.
 
+#[cfg(test)]
+use crate::server::Document;
 use crate::{
     analysis,
-    server::{Document, utils},
+    server::{Documents, utils},
     syntax,
 };
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
-use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Position, Range, Uri};
-use std::collections::HashMap;
+#[cfg(test)]
+use lsp_types::Uri;
+use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Position, Range};
 
 /// Handles a `textDocument/definition` request.
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: GotoDefinitionParams = serde_json::from_value(request.params.clone())
         .context("failed to parse definition params")?;
     let text_document_position = params.text_document_position_params;
 
-    let result = if let Some(document) = documents.get(&text_document_position.text_document.uri) {
-        let analysis = analysis::analyze(&document.text).with_context(|| {
-            format!(
-                "failed to analyze document `{:?}`",
-                text_document_position.text_document.uri
-            )
-        })?;
+    let result =
+        if let Some(document) = documents.get(text_document_position.text_document.uri.as_str()) {
+            let analysis = analysis::analyze(&document.text).with_context(|| {
+                format!(
+                    "failed to analyze document `{:?}`",
+                    text_document_position.text_document.uri
+                )
+            })?;
 
-        analysis
-            .definition(to_text_position(text_document_position.position))
-            .map(|target| {
-                GotoDefinitionResponse::Scalar(Location::new(
-                    text_document_position.text_document.uri,
-                    to_lsp_range(target.selection_range()),
-                ))
-            })
-    } else {
-        utils::definition(
-            &text_document_position.text_document.uri,
-            text_document_position.position,
-            documents,
-        )?
-    };
+            analysis
+                .definition(to_text_position(text_document_position.position))
+                .map(|target| {
+                    GotoDefinitionResponse::Scalar(Location::new(
+                        text_document_position.text_document.uri,
+                        to_lsp_range(target.selection_range()),
+                    ))
+                })
+        } else {
+            utils::definition(
+                &text_document_position.text_document.uri,
+                text_document_position.position,
+                documents,
+            )?
+        };
 
     let response = Response::new_ok(request.id.clone(), result);
     connection
@@ -113,8 +117,8 @@ mod test {
                 partial_result_params: Default::default(),
             },
         );
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: reference_source(),
@@ -166,8 +170,8 @@ mod test {
                 partial_result_params: Default::default(),
             },
         );
-        let documents = HashMap::from([(
-            achitek_uri.clone(),
+        let documents = Documents::from([(
+            achitek_uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: reference_source(),

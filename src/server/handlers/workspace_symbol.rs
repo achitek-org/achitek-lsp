@@ -6,20 +6,21 @@
 //! workspace. This handler searches the server's in-memory Achitek documents
 //! and returns prompt symbols whose names match the query.
 
-use crate::{analysis, server::Document, syntax};
+#[cfg(test)]
+use crate::server::Document;
+use crate::{analysis, server::Documents, syntax};
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
 use lsp_types::{
     Location, Position, Range, SymbolInformation, SymbolKind as LspSymbolKind, Uri,
     WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
-use std::collections::HashMap;
 
 /// Handles a `workspace/symbol` request.
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: WorkspaceSymbolParams = serde_json::from_value(request.params.clone())
         .context("failed to parse workspace symbol params")?;
@@ -27,6 +28,9 @@ pub fn handle(
     let mut symbols = Vec::new();
 
     for (uri, document) in documents {
+        let uri = uri
+            .parse::<Uri>()
+            .with_context(|| format!("failed to parse document URI `{uri}`"))?;
         let analysis = analysis::analyze(&document.text)
             .with_context(|| format!("failed to analyze document `{:?}`", uri))?;
 
@@ -38,7 +42,7 @@ pub fn handle(
                 continue;
             }
 
-            symbols.push(to_lsp_symbol_information(uri, symbol));
+            symbols.push(to_lsp_symbol_information(&uri, symbol));
         }
     }
 
@@ -105,8 +109,8 @@ mod test {
                 partial_result_params: Default::default(),
             },
         );
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: source(),

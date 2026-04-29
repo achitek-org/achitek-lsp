@@ -6,41 +6,45 @@
 //! position. For Achitekfiles, completions include DSL keywords, attributes,
 //! prompt types, references, and dependency-expression helpers.
 
-use crate::{analysis, server::Document, syntax};
+#[cfg(test)]
+use crate::server::Document;
+use crate::{analysis, server::Documents, syntax};
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
+#[cfg(test)]
+use lsp_types::Uri;
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse, Position, Uri,
+    CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse, Position,
 };
-use std::collections::HashMap;
 
 /// Handles a `textDocument/completion` request.
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: CompletionParams = serde_json::from_value(request.params.clone())
         .context("failed to parse completion params")?;
 
-    let result =
-        if let Some(document) = documents.get(&params.text_document_position.text_document.uri) {
-            let analysis = analysis::analyze(&document.text).with_context(|| {
-                format!(
-                    "failed to analyze document `{:?}`",
-                    params.text_document_position.text_document.uri
-                )
-            })?;
-            let items = analysis
-                .completions(to_text_position(params.text_document_position.position))
-                .into_iter()
-                .map(to_lsp_completion_item)
-                .collect::<Vec<_>>();
+    let result = if let Some(document) =
+        documents.get(params.text_document_position.text_document.uri.as_str())
+    {
+        let analysis = analysis::analyze(&document.text).with_context(|| {
+            format!(
+                "failed to analyze document `{:?}`",
+                params.text_document_position.text_document.uri
+            )
+        })?;
+        let items = analysis
+            .completions(to_text_position(params.text_document_position.position))
+            .into_iter()
+            .map(to_lsp_completion_item)
+            .collect::<Vec<_>>();
 
-            Some(CompletionResponse::Array(items))
-        } else {
-            None
-        };
+        Some(CompletionResponse::Array(items))
+    } else {
+        None
+    };
 
     let response = Response::new_ok(request.id.clone(), result);
     connection
@@ -106,8 +110,8 @@ mod test {
                 context: None,
             },
         );
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: valid_source(),

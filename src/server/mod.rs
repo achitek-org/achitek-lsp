@@ -10,7 +10,7 @@
 
 use crate::{arguments::CommunicationsChannel, capabilities};
 use lsp_server::{Connection, IoThreads, Message, Response};
-use lsp_types::{InitializeResult, ServerInfo, Uri};
+use lsp_types::{InitializeResult, ServerInfo};
 use std::collections::HashMap;
 
 mod handlers;
@@ -25,6 +25,13 @@ pub struct Document {
     pub text: String,
 }
 
+/// Open documents keyed by the string form of their URI.
+///
+/// `lsp_types::Uri` carries interior cache state, so keeping URI strings as
+/// keys avoids Clippy's `mutable_key_type` warning while preserving the exact
+/// client URI for lookup.
+pub type Documents = HashMap<String, Document>;
+
 /// Language server runtime.
 ///
 /// A `Server` owns the transport connection, the background IO threads for
@@ -35,7 +42,7 @@ pub struct Server {
     /// Background transport threads that must be joined during shutdown.
     pub io_threads: IoThreads,
     /// Open documents keyed by URI.
-    pub documents: HashMap<Uri, Document>,
+    pub documents: Documents,
 }
 
 impl Server {

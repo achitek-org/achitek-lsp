@@ -12,11 +12,14 @@
 //! foldable ranges, with the symbol name used as collapsed text when supported
 //! by the client.
 
-use crate::{analysis, server::Document};
+#[cfg(test)]
+use crate::server::Document;
+use crate::{analysis, server::Documents};
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
-use lsp_types::{FoldingRange, FoldingRangeParams, Uri};
-use std::collections::HashMap;
+#[cfg(test)]
+use lsp_types::Uri;
+use lsp_types::{FoldingRange, FoldingRangeParams};
 
 /// Handles a `textDocument/foldingRange` request.
 ///
@@ -27,12 +30,12 @@ use std::collections::HashMap;
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: FoldingRangeParams = serde_json::from_value(request.params.clone())
         .context("failed to parse foldingRange params")?;
 
-    let result = if let Some(document) = documents.get(&params.text_document.uri) {
+    let result = if let Some(document) = documents.get(params.text_document.uri.as_str()) {
         let analysis = analysis::analyze(&document.text).with_context(|| {
             format!(
                 "failed to analyze document `{:?}`",
@@ -99,8 +102,8 @@ mod test {
         let uri = test_uri()?;
         let request_id = RequestId::from(1_i32);
         let request = folding_range_request(request_id.clone(), uri.clone());
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: valid_source(),
@@ -136,7 +139,7 @@ mod test {
         let (server_connection, client_connection) = Connection::memory();
         let request_id = RequestId::from(1_i32);
         let request = folding_range_request(request_id.clone(), test_uri()?);
-        let documents = HashMap::new();
+        let documents = Documents::new();
 
         handle(&server_connection, &request, &documents)?;
 

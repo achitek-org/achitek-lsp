@@ -9,14 +9,17 @@
 //! For Achitekfiles, this handler returns nested symbols for language
 //! structures such as the top-level `blueprint` block, `prompt` blocks, and
 //! nested `validate` blocks.
-use crate::{analysis, server::Document, syntax};
+#[cfg(test)]
+use crate::server::Document;
+use crate::{analysis, server::Documents, syntax};
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
+#[cfg(test)]
+use lsp_types::Uri;
 use lsp_types::{
     DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, Position, Range,
-    SymbolKind as LspSymbolKind, Uri,
+    SymbolKind as LspSymbolKind,
 };
-use std::collections::HashMap;
 
 /// Handles a `textDocument/documentSymbol` request.
 ///
@@ -28,10 +31,10 @@ use std::collections::HashMap;
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    in_memory_document: &HashMap<Uri, Document>,
+    in_memory_document: &Documents,
 ) -> anyhow::Result<()> {
     let params: DocumentSymbolParams = serde_json::from_value(request.params.clone())?;
-    let result = if let Some(document) = in_memory_document.get(&params.text_document.uri) {
+    let result = if let Some(document) = in_memory_document.get(params.text_document.uri.as_str()) {
         let analysis = analysis::analyze(&document.text).with_context(|| {
             format!(
                 "failed to analyze document `{:?}`",
@@ -123,8 +126,8 @@ mod test {
                 partial_result_params: Default::default(),
             },
         );
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: valid_source(),
@@ -166,7 +169,7 @@ mod test {
                 partial_result_params: Default::default(),
             },
         );
-        let documents = HashMap::new();
+        let documents = Documents::new();
 
         handle(&server_connection, &request, &documents)?;
 

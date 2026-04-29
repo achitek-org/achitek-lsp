@@ -6,22 +6,25 @@
 //! client whether the cursor is on a renameable symbol and which range should
 //! be edited.
 
-use crate::{analysis, server::Document, syntax};
+#[cfg(test)]
+use crate::server::Document;
+use crate::{analysis, server::Documents, syntax};
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
-use lsp_types::{Position, PrepareRenameResponse, Range, TextDocumentPositionParams, Uri};
-use std::collections::HashMap;
+#[cfg(test)]
+use lsp_types::Uri;
+use lsp_types::{Position, PrepareRenameResponse, Range, TextDocumentPositionParams};
 
 /// Handles a `textDocument/prepareRename` request.
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: TextDocumentPositionParams = serde_json::from_value(request.params.clone())
         .context("failed to parse prepareRename params")?;
 
-    let result = if let Some(document) = documents.get(&params.text_document.uri) {
+    let result = if let Some(document) = documents.get(params.text_document.uri.as_str()) {
         let analysis = analysis::analyze(&document.text).with_context(|| {
             format!(
                 "failed to analyze document `{:?}`",
@@ -94,8 +97,8 @@ mod test {
                 },
             },
         );
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: source(),

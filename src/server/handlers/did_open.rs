@@ -8,17 +8,18 @@
 //! for nearby `.tera` templates that reference its prompts.
 
 use super::diagnostics;
-use crate::server::Document;
+use crate::server::{Document, Documents};
 use anyhow::Context;
 use lsp_server::{Connection, Notification};
-use lsp_types::{DidOpenTextDocumentParams, Uri};
-use std::collections::HashMap;
+use lsp_types::DidOpenTextDocumentParams;
+#[cfg(test)]
+use lsp_types::Uri;
 
 /// Handles a `textDocument/didOpen` notification.
 pub fn handle(
     connection: &Connection,
     notification: &Notification,
-    documents: &mut HashMap<Uri, Document>,
+    documents: &mut Documents,
 ) -> anyhow::Result<()> {
     let params: DidOpenTextDocumentParams = serde_json::from_value(notification.params.clone())
         .context("failed to parse didOpen params")?;
@@ -27,7 +28,7 @@ pub fn handle(
     let version = text_document.version;
 
     documents.insert(
-        uri.clone(),
+        uri.as_str().to_owned(),
         Document {
             version,
             text: text_document.text,
@@ -65,11 +66,13 @@ mod test {
                 },
             },
         );
-        let mut documents = HashMap::new();
+        let mut documents = Documents::new();
 
         handle(&server_connection, &notification, &mut documents)?;
 
-        let document = documents.get(&uri).expect("document should be stored");
+        let document = documents
+            .get(uri.as_str())
+            .expect("document should be stored");
         assert_eq!(document.version, 7);
         assert_eq!(document.text, source());
 
@@ -109,7 +112,7 @@ mod test {
                 },
             },
         );
-        let mut documents = HashMap::new();
+        let mut documents = Documents::new();
 
         handle(&server_connection, &notification, &mut documents)?;
 

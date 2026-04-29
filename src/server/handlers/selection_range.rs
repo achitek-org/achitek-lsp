@@ -10,11 +10,14 @@
 //! inside a prompt name can expand from the prompt name, to the whole prompt
 //! block, and then to larger containing symbols when available.
 
-use crate::{analysis, server::Document, syntax};
+#[cfg(test)]
+use crate::server::Document;
+use crate::{analysis, server::Documents, syntax};
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
-use lsp_types::{Position, Range, SelectionRange, SelectionRangeParams, Uri};
-use std::collections::HashMap;
+#[cfg(test)]
+use lsp_types::Uri;
+use lsp_types::{Position, Range, SelectionRange, SelectionRangeParams};
 
 /// Handles a `textDocument/selectionRange` request.
 ///
@@ -25,12 +28,12 @@ use std::collections::HashMap;
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: SelectionRangeParams = serde_json::from_value(request.params.clone())
         .context("failed to parse selectionRange params")?;
 
-    let result = if let Some(document) = documents.get(&params.text_document.uri) {
+    let result = if let Some(document) = documents.get(params.text_document.uri.as_str()) {
         let analysis = analysis::analyze(&document.text).with_context(|| {
             format!(
                 "failed to analyze document `{:?}`",
@@ -164,8 +167,8 @@ mod test {
                 character: 10,
             }],
         );
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: valid_source(),
@@ -211,7 +214,7 @@ mod test {
                 character: 10,
             }],
         );
-        let documents = HashMap::new();
+        let documents = Documents::new();
 
         handle(&server_connection, &request, &documents)?;
 

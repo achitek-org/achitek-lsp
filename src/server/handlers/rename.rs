@@ -7,9 +7,11 @@
 //! its document-local references, and matching prompt references in nearby
 //! `.tera` templates.
 
+#[cfg(test)]
+use crate::server::Document;
 use crate::{
     analysis,
-    server::{Document, utils},
+    server::{Documents, utils},
     syntax,
 };
 use anyhow::Context;
@@ -22,13 +24,15 @@ use std::{collections::HashMap, fs};
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: RenameParams =
         serde_json::from_value(request.params.clone()).context("failed to parse rename params")?;
     let text_document_position = params.text_document_position;
 
-    let result = if let Some(document) = documents.get(&text_document_position.text_document.uri) {
+    let result = if let Some(document) =
+        documents.get(text_document_position.text_document.uri.as_str())
+    {
         let analysis = analysis::analyze(&document.text).with_context(|| {
             format!(
                 "failed to analyze document `{:?}`",
@@ -153,6 +157,7 @@ mod test {
     };
 
     #[test]
+    #[allow(clippy::mutable_key_type)]
     fn handle_rename_request() -> anyhow::Result<()> {
         let (server_connection, client_connection) = Connection::memory();
         let uri = test_uri()?;
@@ -172,8 +177,8 @@ mod test {
                 work_done_progress_params: Default::default(),
             },
         );
-        let documents = HashMap::from([(
-            uri.clone(),
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: reference_source(),
@@ -231,8 +236,8 @@ mod test {
                 work_done_progress_params: Default::default(),
             },
         );
-        let documents = HashMap::from([(
-            uri.clone(),
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: reference_source(),

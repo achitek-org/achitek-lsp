@@ -1,6 +1,6 @@
 use crate::{
     analysis,
-    server::{Document, utils},
+    server::{Documents, utils},
     syntax,
 };
 use anyhow::Context;
@@ -9,14 +9,9 @@ use lsp_types::{
     Diagnostic as LspDiagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location,
     Position, PublishDiagnosticsParams, Range, Uri,
 };
-use std::collections::HashMap;
 
-pub fn publish(
-    connection: &Connection,
-    uri: &Uri,
-    documents: &HashMap<Uri, Document>,
-) -> anyhow::Result<()> {
-    let Some(document) = documents.get(uri) else {
+pub fn publish(connection: &Connection, uri: &Uri, documents: &Documents) -> anyhow::Result<()> {
+    let Some(document) = documents.get(uri.as_str()) else {
         return Ok(());
     };
 
@@ -47,7 +42,7 @@ pub fn publish(
 pub fn publish_templates(
     connection: &Connection,
     uri: &Uri,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     for (template_uri, diagnostics) in utils::diagnostics(uri, documents)? {
         tracing::debug!(

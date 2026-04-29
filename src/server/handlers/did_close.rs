@@ -6,23 +6,26 @@
 //! the in-memory buffer and clears diagnostics for that URI.
 
 use super::diagnostics;
+#[cfg(test)]
 use crate::server::Document;
+use crate::server::Documents;
 use anyhow::Context;
 use lsp_server::{Connection, Notification};
-use lsp_types::{DidCloseTextDocumentParams, Uri};
-use std::collections::HashMap;
+use lsp_types::DidCloseTextDocumentParams;
+#[cfg(test)]
+use lsp_types::Uri;
 
 /// Handles a `textDocument/didClose` notification.
 pub fn handle(
     connection: &Connection,
     notification: &Notification,
-    documents: &mut HashMap<Uri, Document>,
+    documents: &mut Documents,
 ) -> anyhow::Result<()> {
     let params: DidCloseTextDocumentParams = serde_json::from_value(notification.params.clone())
         .context("failed to parse didClose params")?;
     let uri = params.text_document.uri;
 
-    if documents.remove(&uri).is_some() {
+    if documents.remove(uri.as_str()).is_some() {
         tracing::debug!(?uri, "closed document");
     } else {
         tracing::warn!(?uri, "received close for unknown document");
@@ -49,8 +52,8 @@ mod test {
                 text_document: TextDocumentIdentifier { uri: uri.clone() },
             },
         );
-        let mut documents = HashMap::from([(
-            uri.clone(),
+        let mut documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: String::new(),
@@ -59,7 +62,7 @@ mod test {
 
         handle(&server_connection, &notification, &mut documents)?;
 
-        assert!(!documents.contains_key(&uri));
+        assert!(!documents.contains_key(uri.as_str()));
         let diagnostics = recv_publish_diagnostics(&client_connection)?;
         assert_eq!(diagnostics.uri, uri);
         assert_eq!(diagnostics.version, None);

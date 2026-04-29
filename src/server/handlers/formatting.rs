@@ -12,11 +12,14 @@
 //! layout pass: it trims each line, applies two-space indentation for nested
 //! blocks, and returns a single full-document replacement edit when the text
 //! changes.
+#[cfg(test)]
 use crate::server::Document;
+use crate::server::Documents;
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
-use lsp_types::{DocumentFormattingParams, Position, Range, TextEdit, Uri};
-use std::collections::HashMap;
+#[cfg(test)]
+use lsp_types::Uri;
+use lsp_types::{DocumentFormattingParams, Position, Range, TextEdit};
 
 /// Handles a `textDocument/formatting` request.
 ///
@@ -27,11 +30,11 @@ use std::collections::HashMap;
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: DocumentFormattingParams = serde_json::from_value(request.params.clone())
         .context("failed to parse formatting params")?;
-    let result = if let Some(document) = documents.get(&params.text_document.uri) {
+    let result = if let Some(document) = documents.get(params.text_document.uri.as_str()) {
         let formatted = format_achitek_source(&document.text);
 
         if formatted == document.text {
@@ -115,8 +118,8 @@ mod test {
         let uri = test_uri()?;
         let request_id = RequestId::from(1_i32);
         let request = formatting_request(request_id.clone(), uri.clone());
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: unformatted_source(),
@@ -147,8 +150,8 @@ mod test {
         let uri = test_uri()?;
         let request_id = RequestId::from(1_i32);
         let request = formatting_request(request_id.clone(), uri.clone());
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: formatted_source(),
@@ -173,7 +176,7 @@ mod test {
         let (server_connection, client_connection) = Connection::memory();
         let request_id = RequestId::from(1_i32);
         let request = formatting_request(request_id.clone(), test_uri()?);
-        let documents = HashMap::new();
+        let documents = Documents::new();
 
         handle(&server_connection, &request, &documents)?;
 

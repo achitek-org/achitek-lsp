@@ -6,37 +6,39 @@
 //! document. Editors use the response to show contextual documentation near the
 //! cursor.
 
-use crate::{analysis, server::Document, syntax};
+#[cfg(test)]
+use crate::server::Document;
+use crate::{analysis, server::Documents, syntax};
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
-use lsp_types::{
-    Hover, HoverContents, HoverParams, MarkupContent, MarkupKind, Position, Range, Uri,
-};
-use std::collections::HashMap;
+#[cfg(test)]
+use lsp_types::Uri;
+use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind, Position, Range};
 
 /// Handles a `textDocument/hover` request.
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: HoverParams =
         serde_json::from_value(request.params.clone()).context("failed to parse hover params")?;
     let text_document_position = params.text_document_position_params;
 
-    let result = if let Some(document) = documents.get(&text_document_position.text_document.uri) {
-        let analysis = analysis::analyze(&document.text).with_context(|| {
-            format!(
-                "failed to analyze document `{:?}`",
-                text_document_position.text_document.uri
-            )
-        })?;
-        analysis
-            .hover(to_text_position(text_document_position.position))
-            .map(to_lsp_hover)
-    } else {
-        None
-    };
+    let result =
+        if let Some(document) = documents.get(text_document_position.text_document.uri.as_str()) {
+            let analysis = analysis::analyze(&document.text).with_context(|| {
+                format!(
+                    "failed to analyze document `{:?}`",
+                    text_document_position.text_document.uri
+                )
+            })?;
+            analysis
+                .hover(to_text_position(text_document_position.position))
+                .map(to_lsp_hover)
+        } else {
+            None
+        };
 
     let response = Response::new_ok(request.id.clone(), result);
     connection
@@ -111,8 +113,8 @@ mod test {
                 work_done_progress_params: Default::default(),
             },
         );
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: valid_source(),
@@ -155,7 +157,7 @@ mod test {
             },
         );
 
-        handle(&server_connection, &request, &HashMap::new())?;
+        handle(&server_connection, &request, &Documents::new())?;
 
         let response = recv_response(&client_connection)?;
         let hover: Option<Hover> =

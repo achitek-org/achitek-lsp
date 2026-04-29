@@ -7,58 +7,62 @@
 //! dependency-expression reference locations, plus prompt references in nearby
 //! `.tera` templates.
 
+#[cfg(test)]
+use crate::server::Document;
 use crate::{
     analysis,
-    server::{Document, utils},
+    server::{Documents, utils},
     syntax,
 };
 use anyhow::Context;
 use lsp_server::{Connection, Message, Request, Response};
-use lsp_types::{Location, Position, Range, ReferenceParams, Uri};
-use std::collections::HashMap;
+#[cfg(test)]
+use lsp_types::Uri;
+use lsp_types::{Location, Position, Range, ReferenceParams};
 
 /// Handles a `textDocument/references` request.
 pub fn handle(
     connection: &Connection,
     request: &Request,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<()> {
     let params: ReferenceParams = serde_json::from_value(request.params.clone())
         .context("failed to parse references params")?;
     let text_document_position = params.text_document_position;
 
-    let result = if let Some(document) = documents.get(&text_document_position.text_document.uri) {
-        let analysis = analysis::analyze(&document.text).with_context(|| {
-            format!(
-                "failed to analyze document `{:?}`",
-                text_document_position.text_document.uri
-            )
-        })?;
-        let cursor_position = to_text_position(text_document_position.position);
-        let prompt_name = analysis.prompt_name(cursor_position).map(str::to_owned);
-        let locations = analysis
-            .references(cursor_position, params.context.include_declaration)
-            .into_iter()
-            .map(|target| {
-                Location::new(
-                    text_document_position.text_document.uri.clone(),
-                    to_lsp_range(target.range()),
+    let result =
+        if let Some(document) = documents.get(text_document_position.text_document.uri.as_str()) {
+            let analysis = analysis::analyze(&document.text).with_context(|| {
+                format!(
+                    "failed to analyze document `{:?}`",
+                    text_document_position.text_document.uri
                 )
-            })
-            .collect::<Vec<_>>();
-        let mut locations = locations;
+            })?;
+            let cursor_position = to_text_position(text_document_position.position);
+            let prompt_name = analysis.prompt_name(cursor_position).map(str::to_owned);
+            let locations = analysis
+                .references(cursor_position, params.context.include_declaration)
+                .into_iter()
+                .map(|target| {
+                    Location::new(
+                        text_document_position.text_document.uri.clone(),
+                        to_lsp_range(target.range()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut locations = locations;
 
-        if let (Some(prompt_name), Some(blueprint_dir)) = (
-            prompt_name,
-            utils::blueprint_dir_from_uri(&text_document_position.text_document.uri),
-        ) {
-            locations.extend(utils::scan_references(&blueprint_dir, &prompt_name)?);
-        }
+            if let (Some(prompt_name), Some(blueprint_dir)) = (
+                prompt_name,
+                utils::blueprint_dir_from_uri(&text_document_position.text_document.uri),
+            ) {
+                locations.extend(utils::scan_references(&blueprint_dir, &prompt_name)?);
+            }
 
-        Some(locations)
-    } else {
-        None
-    };
+            Some(locations)
+        } else {
+            None
+        };
 
     let response = Response::new_ok(request.id.clone(), result);
     connection
@@ -124,8 +128,8 @@ mod test {
                 partial_result_params: Default::default(),
             },
         );
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: reference_source(),
@@ -188,8 +192,8 @@ mod test {
                 partial_result_params: Default::default(),
             },
         );
-        let documents = HashMap::from([(
-            uri,
+        let documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: reference_source(),

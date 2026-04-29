@@ -4,23 +4,25 @@
 //! declared in a nearby `Achitekfile`. These helpers preserve the cross-file
 //! behavior used by diagnostics, go-to-definition, references, and rename.
 
-use crate::{analysis, server::Document};
+#[cfg(test)]
+use crate::server::Document;
+use crate::{analysis, server::Documents};
 use anyhow::Context;
 use lsp_types::{
     Diagnostic as LspDiagnostic, DiagnosticSeverity, GotoDefinitionResponse, Location, Position,
     Range, Uri,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
 
 pub fn diagnostics(
     uri: &Uri,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<Vec<(Uri, Vec<LspDiagnostic>)>> {
-    let Some(document) = documents.get(uri) else {
+    let Some(document) = documents.get(uri.as_str()) else {
         return Ok(Vec::new());
     };
     let Some(blueprint_dir) = blueprint_dir_from_uri(uri) else {
@@ -43,7 +45,7 @@ pub fn diagnostics(
 pub fn definition(
     uri: &Uri,
     position: Position,
-    documents: &HashMap<Uri, Document>,
+    documents: &Documents,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let Some(template_path) = file_path_from_uri(uri) else {
         tracing::debug!(?uri, "template definition skipped for non-file URI");
@@ -72,7 +74,7 @@ pub fn definition(
 
     let achitek_uri = path_to_uri(&achitek_path)?;
     let achitek_source = documents
-        .get(&achitek_uri)
+        .get(achitek_uri.as_str())
         .map(|document| document.text.clone())
         .unwrap_or_else(|| fs::read_to_string(&achitek_path).unwrap_or_default());
     let analysis = analysis::analyze(&achitek_source)
@@ -491,8 +493,8 @@ mod test {
         )?;
         let achitek_uri = path_to_uri(&achitek_path)?;
         let template_uri = path_to_uri(&template_path)?;
-        let documents = HashMap::from([(
-            achitek_uri.clone(),
+        let documents = Documents::from([(
+            achitek_uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: source(),

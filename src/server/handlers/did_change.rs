@@ -8,17 +8,20 @@
 //! `.tera` templates that reference its prompts.
 
 use super::diagnostics;
+#[cfg(test)]
 use crate::server::Document;
+use crate::server::Documents;
 use anyhow::Context;
 use lsp_server::{Connection, Notification};
-use lsp_types::{DidChangeTextDocumentParams, TextDocumentContentChangeEvent, Uri};
-use std::collections::HashMap;
+#[cfg(test)]
+use lsp_types::Uri;
+use lsp_types::{DidChangeTextDocumentParams, TextDocumentContentChangeEvent};
 
 /// Handles a `textDocument/didChange` notification.
 pub fn handle(
     connection: &Connection,
     notification: &Notification,
-    documents: &mut HashMap<Uri, Document>,
+    documents: &mut Documents,
 ) -> anyhow::Result<()> {
     let params: DidChangeTextDocumentParams = serde_json::from_value(notification.params.clone())
         .context("failed to parse didChange params")?;
@@ -26,7 +29,7 @@ pub fn handle(
     let version = params.text_document.version;
     let change_count = params.content_changes.len();
 
-    if let Some(document) = documents.get_mut(&uri) {
+    if let Some(document) = documents.get_mut(uri.as_str()) {
         document.version = version;
         document.text = apply_content_changes(&document.text, &params.content_changes);
         tracing::debug!(?uri, version, change_count, "changed document");
@@ -71,8 +74,8 @@ mod test {
     fn handle_did_change_updates_document_and_publishes_diagnostics() -> anyhow::Result<()> {
         let (server_connection, client_connection) = Connection::memory();
         let uri = test_uri()?;
-        let mut documents = HashMap::from([(
-            uri.clone(),
+        let mut documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: String::new(),
@@ -95,7 +98,9 @@ mod test {
 
         handle(&server_connection, &notification, &mut documents)?;
 
-        let document = documents.get(&uri).expect("document should remain stored");
+        let document = documents
+            .get(uri.as_str())
+            .expect("document should remain stored");
         assert_eq!(document.version, 2);
         assert_eq!(document.text, source());
 
@@ -124,8 +129,8 @@ mod test {
         let uri = utils::path_to_uri(&achitek_path)?;
         let template_uri = utils::path_to_uri(&template_path)?;
         let (server_connection, client_connection) = Connection::memory();
-        let mut documents = HashMap::from([(
-            uri.clone(),
+        let mut documents = Documents::from([(
+            uri.as_str().to_owned(),
             Document {
                 version: 1,
                 text: String::new(),
