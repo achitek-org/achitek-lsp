@@ -1,0 +1,19 @@
+[package]
+name = "terafile"
+version = "0.1.1"
+edition = '2024'
+rust-version = "1.90.0"
+description = "tera file parser"
+readme = "README.md"
+# repository = "https://github.com/achitek-org/achitek-ls"
+license = "MIT"
+# keywords = ["achitekfile", "lsp", "language-server"]
+# categories = ["command-line-utilities"]
+
+
+[dependencies]
+tree-sitter = "0.26.8"
+tree-sitter-language = "0.1.7"
+
+[build-dependencies]
+cc = "1.2.61"

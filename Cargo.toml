@@ -10,6 +10,10 @@ license = "MIT"
 keywords = ["achitekfile", "lsp", "language-server"]
 categories = ["command-line-utilities"]
 
+[workspace]
+members = [".", "./crates/terafile"]
+resolver = "3"
+
 [[bin]]
 name = "achitek-ls"
 path = "src/main.rs"
