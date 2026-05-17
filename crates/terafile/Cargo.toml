@@ -12,6 +12,7 @@ license = "MIT"
 
 
 [dependencies]
+achitek-source = { version = "0.1.0", path = "../achitek-source" }
 tree-sitter = "0.26.8"
 tree-sitter-language = "0.1.7"
 

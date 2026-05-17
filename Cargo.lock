@@ -26,9 +26,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "achitek-source"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tree-sitter",
+]
+
+[[package]]
 name = "achitekfile"
 version = "0.2.0"
 dependencies = [
+ "achitek-source",
  "indoc",
  "regex",
  "serde",
@@ -369,6 +378,7 @@ dependencies = [
 name = "terafile"
 version = "0.1.1"
 dependencies = [
+ "achitek-source",
  "cc",
  "indoc",
  "tree-sitter",

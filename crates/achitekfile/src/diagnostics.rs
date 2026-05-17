@@ -154,6 +154,8 @@
 //! [ACH3003]: DiagnosticCode::InvalidSelectionBounds
 //! [ACH3004]: DiagnosticCode::InvalidRegex
 
+pub use achitek_source::{Severity, TextPosition, TextRange};
+
 /// A user-facing issue found in Achitekfile source.
 ///
 /// Diagnostics carry stable machine-readable metadata that downstream tools can
@@ -709,85 +711,4 @@ impl DiagnosticCode {
             Self::InvalidRegex => Some("Use a regex pattern that can be compiled by Achitek."),
         }
     }
-}
-
-/// Severity level for an Achitekfile diagnostic.
-///
-/// Severity indicates how tools should present a diagnostic. Errors describe
-/// invalid source that should prevent normal execution. Warnings describe
-/// suspicious but still analyzable source. Hints provide low-priority guidance.
-///
-/// See [`Diagnostic`] for an example of reading diagnostic severity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Severity {
-    /// Invalid source that should prevent normal execution.
-    Error,
-    /// Suspicious source that can still be analyzed.
-    Warning,
-    /// Low-priority guidance.
-    Hint,
-}
-
-/// A zero-based byte position in Achitekfile source text.
-///
-/// `line` and `byte` use Tree-sitter's native coordinate system: the line is
-/// zero-based and `byte` is the zero-based UTF-8 byte offset from the beginning
-/// of that line.
-///
-/// This type is independent of [LSP] positions. Language-server consumers
-/// should convert `byte` into the negotiated LSP position encoding before
-/// publishing diagnostics or other ranges to an editor.
-///
-/// [LSP]: https://microsoft.github.io/language-server-protocol/
-///
-/// # Examples
-///
-/// ```
-/// let position = achitekfile::TextPosition { line: 3, byte: 12 };
-///
-/// assert_eq!(position.line, 3);
-/// assert_eq!(position.byte, 12);
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TextPosition {
-    /// Zero-based line number.
-    pub line: usize,
-
-    /// Zero-based UTF-8 byte offset within the line.
-    pub byte: usize,
-}
-
-/// A byte range in Achitekfile source text.
-///
-/// The range starts at `start` and ends at `end`, both expressed as zero-based
-/// line plus UTF-8 byte offset positions. Consumers can use this to highlight
-/// diagnostics, symbols, prompt names, attributes, and other source elements
-/// after converting into their presentation protocol's expected position
-/// encoding.
-///
-/// # Examples
-///
-/// ```
-/// let source = r#"
-/// prompt "project_name" {
-///   type = string
-/// }
-/// "#;
-///
-/// let analysis = achitekfile::analyze(source)?;
-/// let range = analysis.diagnostics()[0].range();
-///
-/// assert!(range.start <= range.end);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TextRange {
-    /// Start position of the range.
-    pub start: TextPosition,
-
-    /// End position of the range.
-    pub end: TextPosition,
 }

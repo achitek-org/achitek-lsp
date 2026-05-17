@@ -78,6 +78,8 @@
 //! [TERA3004]: DiagnosticCode::PositionalMacroArgument
 //! [TERA3005]: DiagnosticCode::UnknownMacroNamespace
 
+pub use achitek_source::{Severity, TextPosition, TextRange};
+
 /// A user-facing issue found in Tera source.
 ///
 /// Diagnostics carry stable machine-readable metadata that downstream tools can
@@ -343,73 +345,6 @@ impl DiagnosticCode {
             Self::UnknownMacroNamespace => {
                 Some("Use `self` or a namespace imported with an `import` statement.")
             }
-        }
-    }
-}
-
-/// Severity level for a Tera diagnostic.
-///
-/// Severity indicates how tools should present a diagnostic. Errors describe
-/// invalid source that should prevent normal execution. Warnings describe
-/// suspicious but still analyzable source. Hints provide low-priority guidance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Severity {
-    /// Invalid source that should prevent normal execution.
-    Error,
-    /// Suspicious source that can still be analyzed.
-    Warning,
-    /// Low-priority guidance.
-    Hint,
-}
-
-/// A zero-based byte position in Tera source text.
-///
-/// `line` and `byte` use Tree-sitter's native coordinate system: the line is
-/// zero-based and `byte` is the zero-based UTF-8 byte offset from the beginning
-/// of that line.
-///
-/// This type is independent of LSP positions. Language-server consumers should
-/// convert `byte` into the negotiated LSP position encoding before publishing
-/// diagnostics or other ranges to an editor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct TextPosition {
-    /// Zero-based line number.
-    pub line: usize,
-
-    /// Zero-based UTF-8 byte offset within the line.
-    pub byte: usize,
-}
-
-/// A byte range in Tera source text.
-///
-/// The range starts at `start` and ends at `end`, both expressed as zero-based
-/// line plus UTF-8 byte offset positions. Consumers can use this to highlight
-/// diagnostics, symbols, variable references, template paths, and other source
-/// elements after converting into their presentation protocol's expected
-/// position encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct TextRange {
-    /// Start position of the range.
-    pub start: TextPosition,
-
-    /// End position of the range.
-    pub end: TextPosition,
-}
-
-impl From<tree_sitter::Point> for TextPosition {
-    fn from(point: tree_sitter::Point) -> Self {
-        Self {
-            line: point.row,
-            byte: point.column,
-        }
-    }
-}
-
-impl From<tree_sitter::Range> for TextRange {
-    fn from(range: tree_sitter::Range) -> Self {
-        Self {
-            start: range.start_point.into(),
-            end: range.end_point.into(),
         }
     }
 }

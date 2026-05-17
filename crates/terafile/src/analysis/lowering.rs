@@ -6,11 +6,11 @@
 //! those facts are valid; diagnostics can use the same source tree and model to
 //! explain violations with better source locations.
 
-use super::syntax::{is_child_for_field, named_children, text, text_range_for_node};
 use crate::model::{
     Binding, BindingKind, Macro, MacroCall, MacroParameter, NamedReference, Spanned,
     TemplateDependency, TemplateDependencyKind, TemplatePath, TeraFile, VariableReference,
 };
+use achitek_source::{is_child_for_field, named_children, text, text_range_for_node};
 use tree_sitter::{Node, Tree};
 
 impl TeraFile {

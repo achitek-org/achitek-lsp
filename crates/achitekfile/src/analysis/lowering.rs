@@ -10,11 +10,11 @@
 //! Lowering is a crate-internal implementation detail. Public consumers should
 //! use [`crate::analyze`] rather than constructing a model from a tree.
 
-use super::syntax::{named_children, text, text_range_for_node};
 use crate::model::{
     AchitekFile, Blueprint, ComparisonOperator, Dependency, Prompt, PromptType, Spanned,
     Validation, Value,
 };
+use achitek_source::{named_children, text, text_range_for_node};
 use tree_sitter::{Node, Tree};
 
 impl AchitekFile {

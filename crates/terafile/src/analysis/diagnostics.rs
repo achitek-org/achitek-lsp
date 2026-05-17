@@ -1,7 +1,7 @@
 //! Diagnostic collection for Tera analysis.
 
-use super::syntax::{text, text_range_for_node};
 use crate::{Diagnostic, DiagnosticCode};
+use achitek_source::{text, text_range_for_node};
 use tree_sitter::{Node, Tree};
 
 /// Collects diagnostics for one parsed Tera syntax tree.

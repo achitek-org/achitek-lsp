@@ -1,0 +1,18 @@
+[package]
+name = "achitek-source"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared source analysis primitives for Achitek crates"
+repository.workspace = true
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }
+tree-sitter = "0.26.8"
+
+[features]
+serde = ["dep:serde"]
+
+[lints]
+workspace = true

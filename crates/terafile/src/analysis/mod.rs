@@ -7,7 +7,6 @@
 
 mod diagnostics;
 mod lowering;
-mod syntax;
 
 use crate::{
     Diagnostic,

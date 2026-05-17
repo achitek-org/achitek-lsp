@@ -8,12 +8,13 @@ mod model;
 mod parser;
 mod tree_sitter_tera;
 
+pub use achitek_source::Spanned;
 pub use analysis::{Analysis, AnalysisError, analyze};
 pub use diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticKind, Severity, TextPosition, TextRange,
 };
 pub use model::{
-    Binding, BindingKind, Macro, MacroCall, MacroParameter, NamedReference, Spanned,
-    TemplateDependency, TemplateDependencyKind, TemplatePath, TeraFile, VariableReference,
+    Binding, BindingKind, Macro, MacroCall, MacroParameter, NamedReference, TemplateDependency,
+    TemplateDependencyKind, TemplatePath, TeraFile, VariableReference,
 };
 pub use parser::{ParseError, parse};

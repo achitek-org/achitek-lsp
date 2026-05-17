@@ -7,7 +7,6 @@
 
 mod diagnostics;
 mod lowering;
-mod syntax;
 
 use self::diagnostics::collect_diagnostics;
 use super::{

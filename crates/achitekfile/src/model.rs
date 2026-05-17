@@ -34,58 +34,10 @@
 //! to point back into source text, prefer crate-owned range types such as
 //! [`TextRange`] instead of exposing Tree-sitter nodes directly.
 
-use super::{
-    TextRange,
-    sort::{Graph, SortError, sort_graph},
-};
+use super::sort::{Graph, SortError, sort_graph};
+pub use achitek_source::Spanned;
+use achitek_source::TextRange;
 use std::{collections::HashMap, vec};
-
-/// A value paired with the source range that produced it.
-///
-/// Spans let editor-facing consumers connect recovered model values back to the
-/// original source text without exposing Tree-sitter nodes.
-///
-/// # Examples
-///
-/// ```
-/// let source = r#"
-/// blueprint {
-///   version = "1.0.0"
-///   name = "web-app"
-/// }
-/// "#;
-///
-/// let analysis = achitekfile::analyze(source)?;
-/// let version = analysis
-///     .file()
-///     .blueprint()
-///     .version
-///     .as_ref()
-///     .map(|spanned| spanned.as_ref().as_str());
-///
-/// assert_eq!(version, Some("1.0.0"));
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Spanned<T> {
-    /// Recovered model value.
-    pub value: T,
-    /// Source range that produced the value.
-    pub range: TextRange,
-}
-
-impl<T> AsRef<T> for Spanned<T> {
-    fn as_ref(&self) -> &T {
-        &self.value
-    }
-}
-
-impl<T> AsMut<T> for Spanned<T> {
-    fn as_mut(&mut self) -> &mut T {
-        &mut self.value
-    }
-}
 
 /// Recovering blueprint metadata.
 ///

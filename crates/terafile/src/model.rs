@@ -6,31 +6,7 @@
 //! and where they appeared, while diagnostics decide whether those constructs
 //! are valid for a particular context.
 
-use crate::TextRange;
-
-/// A value paired with the source range that produced it.
-///
-/// Spans let editor-facing consumers connect recovered model values back to the
-/// original source text without exposing Tree-sitter nodes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Spanned<T> {
-    /// Recovered model value.
-    pub value: T,
-    /// Source range that produced the value.
-    pub range: TextRange,
-}
-
-impl<T> AsRef<T> for Spanned<T> {
-    fn as_ref(&self) -> &T {
-        &self.value
-    }
-}
-
-impl<T> AsMut<T> for Spanned<T> {
-    fn as_mut(&mut self) -> &mut T {
-        &mut self.value
-    }
-}
+pub use achitek_source::Spanned;
 
 /// Recovering semantic representation of one Tera template.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]

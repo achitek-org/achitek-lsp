@@ -1,9 +1,9 @@
-use super::syntax::{named_children, text, text_range_for_node};
 use crate::{
     Diagnostic, DiagnosticCode, TextRange,
     model::{AchitekFile, Dependency, Prompt, PromptType, Spanned, Value},
     sort::{Graph, analyze_graph},
 };
+use achitek_source::{named_children, text, text_range_for_node};
 use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Tree};
 
