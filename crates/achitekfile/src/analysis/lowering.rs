@@ -1,3 +1,15 @@
+//! Lowers the Tree-sitter syntax tree into the forgiving Achitekfile model.
+//!
+//! The parser layer preserves source syntax exactly as Tree-sitter sees it.
+//! This module performs the next analysis step: it walks named syntax nodes,
+//! extracts Achitekfile concepts, decodes literal values, and stores source
+//! ranges on recovered values. It intentionally skips malformed pieces instead
+//! of reporting diagnostics directly; diagnostics are collected in the
+//! diagnostics pass so model recovery and validation stay separate.
+//!
+//! Lowering is a crate-internal implementation detail. Public consumers should
+//! use [`crate::analyze`] rather than constructing a model from a tree.
+
 use super::syntax::{named_children, text, text_range_for_node};
 use crate::model::{
     AchitekFile, Blueprint, ComparisonOperator, Dependency, Prompt, PromptType, Spanned,
@@ -5,29 +17,41 @@ use crate::model::{
 };
 use tree_sitter::{Node, Tree};
 
-pub(super) fn build_file(tree: &Tree, source: &str) -> AchitekFile {
-    let root = tree.root_node();
-    let mut cursor = root.walk();
-    let mut blueprint = Blueprint::default();
-    let mut prompts = Vec::new();
+impl AchitekFile {
+    /// Creates a recovering Achitekfile model from a parsed Tree-sitter tree.
+    ///
+    /// The resulting model keeps optional fields optional and preserves source
+    /// ranges for recovered declarations. Invalid or incomplete syntax is
+    /// tolerated here; the diagnostics pass is responsible for explaining why
+    /// skipped or missing pieces are invalid.
+    pub(crate) fn from_tree(tree: &Tree, source: &str) -> Self {
+        let root = tree.root_node();
+        let mut cursor = root.walk();
+        let mut blueprint = Blueprint::default();
+        let mut prompts = Vec::new();
 
-    for child in root.named_children(&mut cursor) {
-        match child.kind() {
-            "blueprint_block" => {
-                blueprint = parse_blueprint(child, source);
-            }
-            "prompt_block" => {
-                if let Some(prompt) = parse_prompt(child, source) {
-                    prompts.push(prompt);
+        for child in root.named_children(&mut cursor) {
+            match child.kind() {
+                "blueprint_block" => {
+                    blueprint = parse_blueprint(child, source);
                 }
+                "prompt_block" => {
+                    if let Some(prompt) = parse_prompt(child, source) {
+                        prompts.push(prompt);
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
-    }
 
-    AchitekFile::new(blueprint, prompts)
+        AchitekFile::new(blueprint, prompts)
+    }
 }
 
+/// Lowers a `blueprint_block` syntax node into recovered blueprint metadata.
+///
+/// Unknown attributes and malformed values are ignored here so diagnostics can
+/// be produced from the syntax tree with better source locations.
 fn parse_blueprint(node: Node<'_>, source: &str) -> Blueprint {
     let mut blueprint = Blueprint {
         range: Some(text_range_for_node(node)),
@@ -68,6 +92,11 @@ fn parse_blueprint(node: Node<'_>, source: &str) -> Blueprint {
     blueprint
 }
 
+/// Lowers a `prompt_block` syntax node into a recovered prompt declaration.
+///
+/// Returns `None` when the prompt name cannot be recovered, because the prompt
+/// cannot be identified meaningfully without it. Other missing pieces remain
+/// optional on the recovered model.
 fn parse_prompt(node: Node<'_>, source: &str) -> Option<Spanned<Prompt>> {
     let name_node = node.child_by_field_name("name")?;
     let name = parse_string_literal(name_node, source)?;
@@ -124,6 +153,10 @@ fn parse_prompt(node: Node<'_>, source: &str) -> Option<Spanned<Prompt>> {
     })
 }
 
+/// Lowers validation attributes into an existing recovered validation model.
+///
+/// This mutates the prompt's validation state because validation attributes are
+/// optional and each recognized attribute fills one field on the model.
 fn parse_validation(node: Node<'_>, source: &str, validation: &mut Validation) {
     for item in named_children(node).filter(|node| node.kind() == "validate_attribute") {
         let Some(attribute) = named_children(item).next() else {
@@ -148,6 +181,7 @@ fn parse_validation(node: Node<'_>, source: &str, validation: &mut Validation) {
     }
 }
 
+/// Converts a prompt type syntax node into a known prompt type.
 fn parse_prompt_type(node: Node<'_>, source: &str) -> Option<PromptType> {
     match text(node, source) {
         "string" => Some(PromptType::String),
@@ -159,6 +193,10 @@ fn parse_prompt_type(node: Node<'_>, source: &str) -> Option<PromptType> {
     }
 }
 
+/// Decodes an Achitekfile string literal into its model value.
+///
+/// Unsupported escape sequences return `None`; diagnostics for the underlying
+/// invalid literal are emitted by the diagnostics pass.
 fn parse_string_literal(node: Node<'_>, source: &str) -> Option<String> {
     let text = text(node, source);
     let without_open = text.strip_prefix('"')?;
@@ -185,6 +223,7 @@ fn parse_string_literal(node: Node<'_>, source: &str) -> Option<String> {
     Some(parsed)
 }
 
+/// Lowers an array syntax node into recovered model values.
 fn parse_array(node: Node<'_>, source: &str) -> Vec<Value> {
     let Some(value_list) = named_children(node).find(|node| node.kind() == "value_list") else {
         return Vec::new();
@@ -196,6 +235,7 @@ fn parse_array(node: Node<'_>, source: &str) -> Vec<Value> {
         .collect()
 }
 
+/// Lowers a literal syntax node into a model value.
 fn parse_value(node: Node<'_>, source: &str) -> Option<Value> {
     let inner = if node.kind() == "value" || node.kind() == "literal_value" {
         named_children(node).next()?
@@ -217,6 +257,7 @@ fn parse_value(node: Node<'_>, source: &str) -> Option<Value> {
     }
 }
 
+/// Converts a boolean syntax node into a Rust boolean.
 fn parse_bool(node: Node<'_>, source: &str) -> Option<bool> {
     match text(node, source) {
         "true" => Some(true),
@@ -225,10 +266,15 @@ fn parse_bool(node: Node<'_>, source: &str) -> Option<bool> {
     }
 }
 
+/// Converts an integer syntax node into an unsigned integer.
 fn parse_integer(node: Node<'_>, source: &str) -> Option<u64> {
     text(node, source).parse::<u64>().ok()
 }
 
+/// Lowers a dependency expression into the recovered dependency model.
+///
+/// Unsupported method or combinator names return `None`; the diagnostics pass
+/// reports those source violations separately.
 fn parse_dependency(node: Node<'_>, source: &str) -> Option<Dependency> {
     let inner = if node.kind() == "dependency_expr" {
         named_children(node).next()?
@@ -282,6 +328,7 @@ fn parse_dependency(node: Node<'_>, source: &str) -> Option<Dependency> {
     }
 }
 
+/// Extracts the comparison operator from a comparison dependency node.
 fn parse_comparison_operator(node: Node<'_>, source: &str) -> Option<ComparisonOperator> {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {

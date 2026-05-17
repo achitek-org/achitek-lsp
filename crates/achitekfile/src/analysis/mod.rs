@@ -5,12 +5,11 @@
 //! is reserved for infrastructure failures only; if errors are
 //! detected, they are returned as structured [`Diagnostic`] values.
 
-mod build_model;
 mod diagnostics;
+mod lowering;
 mod syntax;
-mod validate;
 
-use self::{build_model::build_file, diagnostics::collect_diagnostics, validate::validate_file};
+use self::diagnostics::collect_diagnostics;
 use super::{
     Diagnostic,
     model::{AchitekFile, ValidAchitekFile},
@@ -125,7 +124,7 @@ impl<'a> Analysis<'a> {
             return Err(self.diagnostics);
         }
 
-        Ok(validate_file(self.file))
+        Ok(self.file.into_valid_unchecked())
     }
 }
 
@@ -240,7 +239,7 @@ enum AnalysisErrorKind {
 /// ```
 pub fn analyze(source: &str) -> Result<Analysis<'_>, AnalysisError> {
     let tree = parser::parse_tree(source)?;
-    let file = build_file(&tree, source);
+    let file = AchitekFile::from_tree(&tree, source);
     let diagnostics = collect_diagnostics(&tree, source, &file);
 
     Ok(Analysis {

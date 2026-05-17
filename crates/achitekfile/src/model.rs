@@ -164,6 +164,57 @@ impl AchitekFile {
     pub fn prompts(&self) -> &[Spanned<Prompt>] {
         &self.prompts
     }
+
+    pub(crate) fn into_valid_unchecked(self) -> ValidAchitekFile {
+        let blueprint = self.blueprint();
+
+        let valid_blueprint = ValidBlueprint {
+            version: blueprint
+                .version
+                .as_ref()
+                .expect("analysis should reject blueprints without a version")
+                .value
+                .clone(),
+            name: blueprint
+                .name
+                .as_ref()
+                .expect("analysis should reject blueprints without a name")
+                .value
+                .clone(),
+            description: blueprint
+                .description
+                .as_ref()
+                .map(|description| description.value.clone()),
+            author: blueprint.author.as_ref().map(|author| author.value.clone()),
+            min_achitek_version: blueprint
+                .min_achitek_version
+                .as_ref()
+                .map(|version| version.value.clone()),
+        };
+
+        let valid_prompts = self
+            .prompts()
+            .iter()
+            .map(|spanned_prompt: &Spanned<Prompt>| {
+                let prompt = &spanned_prompt.value;
+
+                ValidPrompt {
+                    name: prompt.name.clone(),
+                    prompt_type: prompt
+                        .prompt_type
+                        .expect("analysis should reject prompts without a type"),
+                    help: prompt.help.clone(),
+                    choices: prompt.choices.clone(),
+                    default: prompt.default.clone(),
+                    required: prompt.required.unwrap_or(false),
+                    depends_on: prompt.depends_on.clone(),
+                    validation: prompt.validation.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        ValidAchitekFile::new(valid_blueprint, valid_prompts)
+    }
 }
 
 /// A parsed prompt declaration from an Achitekfile.
