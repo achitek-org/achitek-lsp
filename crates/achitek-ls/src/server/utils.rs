@@ -6,12 +6,10 @@
 
 #[cfg(test)]
 use crate::server::Document;
-use crate::workspace::Workspace;
-use crate::{editor, server::Documents};
+use crate::{server::Documents, workspace::Workspace};
 use anyhow::Context;
 use lsp_types::{
-    Diagnostic as LspDiagnostic, DiagnosticSeverity, GotoDefinitionResponse, Location,
-    NumberOrString, Position, Range, Uri,
+    Diagnostic as LspDiagnostic, DiagnosticSeverity, Location, NumberOrString, Position, Range, Uri,
 };
 use std::{
     collections::HashSet,
@@ -50,69 +48,6 @@ pub fn diagnostics(
     );
 
     scan_diagnostics(&blueprint_dir, &prompt_names)
-}
-
-pub fn definition(
-    uri: &Uri,
-    position: Position,
-    documents: &Documents,
-) -> anyhow::Result<Option<GotoDefinitionResponse>> {
-    let Some(template_path) = file_path_from_uri(uri) else {
-        tracing::debug!(?uri, "template definition skipped for non-file URI");
-        return Ok(None);
-    };
-    if template_path.extension().and_then(|ext| ext.to_str()) != Some("tera") {
-        tracing::debug!(?uri, path = %template_path.display(), "template definition skipped for non-template file");
-        return Ok(None);
-    }
-
-    let source = fs::read_to_string(&template_path)
-        .with_context(|| format!("failed to read template `{}`", template_path.display()))?;
-    let Some(reference_name) = reference_at_position(&source, position) else {
-        tracing::debug!(
-            ?uri,
-            line = position.line,
-            character = position.character,
-            "no template reference at position"
-        );
-        return Ok(None);
-    };
-    let Some(achitek_path) = find_achitekfile_for_template(&template_path) else {
-        tracing::warn!(?uri, path = %template_path.display(), "could not find Achitekfile for template");
-        return Ok(None);
-    };
-
-    let achitek_uri = path_to_uri(&achitek_path)?;
-    let achitek_source = documents
-        .get(achitek_uri.as_str())
-        .map(|document| document.text.clone())
-        .unwrap_or_else(|| fs::read_to_string(&achitek_path).unwrap_or_default());
-    let analysis = editor::build(&achitek_source)
-        .with_context(|| format!("failed to analyze `{}`", achitek_path.display()))?;
-    let Some(symbol) = analysis.symbols().iter().find(|symbol| {
-        symbol.kind() == editor::SymbolKind::Prompt && symbol.name() == reference_name
-    }) else {
-        tracing::debug!(
-            ?uri,
-            reference = reference_name,
-            "template reference has no matching prompt"
-        );
-        return Ok(None);
-    };
-    tracing::debug!(
-        ?uri,
-        reference = reference_name,
-        target = ?achitek_uri,
-        "resolved template definition"
-    );
-
-    Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
-        achitek_uri,
-        Range {
-            start: to_lsp_position(symbol.selection_range().start_position),
-            end: to_lsp_position(symbol.selection_range().end_position),
-        },
-    ))))
 }
 
 pub fn scan_references(root: &Path, prompt_name: &str) -> anyhow::Result<Vec<Location>> {
@@ -254,7 +189,7 @@ fn references_in_source(source: &str, uri: &Uri, prompt_name: &str) -> Vec<Locat
         .collect()
 }
 
-fn reference_at_position(source: &str, position: Position) -> Option<String> {
+pub(crate) fn reference_at_position(source: &str, position: Position) -> Option<String> {
     let column = usize::try_from(position.character).ok()?;
 
     identifiers_in_source(source, &"file:///template.tera".parse().ok()?)
@@ -404,7 +339,7 @@ fn prompt_name_set(analysis: &achitekfile::Analysis<'_>) -> HashSet<String> {
         .collect()
 }
 
-fn find_achitekfile_for_template(template_path: &Path) -> Option<PathBuf> {
+pub(crate) fn find_achitekfile_for_template(template_path: &Path) -> Option<PathBuf> {
     let mut dir = template_path.parent()?;
     loop {
         let candidate = dir.join("Achitekfile");
@@ -453,13 +388,6 @@ pub fn path_to_uri(path: &Path) -> anyhow::Result<Uri> {
     value
         .parse()
         .with_context(|| format!("failed to parse `{value}` as a URI"))
-}
-
-fn to_lsp_position(position: crate::syntax::TextPosition) -> Position {
-    Position {
-        line: u32::try_from(position.row).expect("line should fit into u32"),
-        character: u32::try_from(position.column).expect("column should fit into u32"),
-    }
 }
 
 fn tera_range_to_lsp(range: terafile::TextRange) -> Range {

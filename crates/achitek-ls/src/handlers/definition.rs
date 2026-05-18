@@ -14,11 +14,11 @@ use crate::{
     editor,
     server::{ServerState, utils},
     syntax,
+    workspace::DocumentKind,
 };
 use anyhow::Context;
-#[cfg(test)]
-use lsp_types::Uri;
-use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Position, Range};
+use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Position, Range, Uri};
+use std::fs;
 
 /// Handles a `textDocument/definition` request.
 pub fn handle(
@@ -26,33 +26,108 @@ pub fn handle(
     params: GotoDefinitionParams,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let text_document_position = params.text_document_position_params;
+    let uri = text_document_position.text_document.uri;
+    let position = text_document_position.position;
 
-    if let Some(document) = state
+    match state.document_kind(&uri) {
+        DocumentKind::Achitekfile => achitekfile_definition(state, uri, position),
+        DocumentKind::TeraTemplate => tera_definition(state, uri, position),
+        DocumentKind::Manifest | DocumentKind::Unknown => Ok(None),
+    }
+}
+
+fn achitekfile_definition(
+    state: &ServerState,
+    uri: Uri,
+    position: Position,
+) -> anyhow::Result<Option<GotoDefinitionResponse>> {
+    let Some(document) = state.documents.get(uri.as_str()) else {
+        return Ok(None);
+    };
+
+    let analysis = editor::build(&document.text)
+        .with_context(|| format!("failed to analyze document `{:?}`", uri))?;
+
+    Ok(analysis
+        .definition(to_text_position(position))
+        .map(|target| {
+            GotoDefinitionResponse::Scalar(Location::new(
+                uri,
+                to_lsp_range(target.selection_range()),
+            ))
+        }))
+}
+
+fn tera_definition(
+    state: &ServerState,
+    uri: Uri,
+    position: Position,
+) -> anyhow::Result<Option<GotoDefinitionResponse>> {
+    let Some(template_path) = utils::file_path_from_uri(&uri) else {
+        tracing::debug!(?uri, "template definition skipped for non-file URI");
+        return Ok(None);
+    };
+
+    let source = state
         .documents
-        .get(text_document_position.text_document.uri.as_str())
-    {
-        let analysis = editor::build(&document.text).with_context(|| {
-            format!(
-                "failed to analyze document `{:?}`",
-                text_document_position.text_document.uri
-            )
+        .get(uri.as_str())
+        .map(|document| Ok(document.text.clone()))
+        .unwrap_or_else(|| {
+            fs::read_to_string(&template_path)
+                .with_context(|| format!("failed to read template `{}`", template_path.display()))
         })?;
 
-        Ok(analysis
-            .definition(to_text_position(text_document_position.position))
-            .map(|target| {
-                GotoDefinitionResponse::Scalar(Location::new(
-                    text_document_position.text_document.uri,
-                    to_lsp_range(target.selection_range()),
-                ))
-            }))
-    } else {
-        utils::definition(
-            &text_document_position.text_document.uri,
-            text_document_position.position,
-            &state.documents,
-        )
-    }
+    let Some(reference_name) = utils::reference_at_position(&source, position) else {
+        tracing::debug!(?uri, ?position, "no template reference under cursor");
+        return Ok(None);
+    };
+
+    let achitek_path = state
+        .workspace
+        .project_for_path(&template_path)
+        .map(|project| project.achitekfile().to_path_buf())
+        .or_else(|| utils::find_achitekfile_for_template(&template_path));
+    let Some(achitek_path) = achitek_path else {
+        tracing::debug!(
+            ?uri,
+            reference = reference_name,
+            "template definition skipped because no achitekfile was found"
+        );
+        return Ok(None);
+    };
+
+    let achitek_uri = utils::path_to_uri(&achitek_path)?;
+    let achitek_source = state
+        .documents
+        .get(achitek_uri.as_str())
+        .map(|document| document.text.clone())
+        .unwrap_or_else(|| fs::read_to_string(&achitek_path).unwrap_or_default());
+
+    let analysis = editor::build(&achitek_source)
+        .with_context(|| format!("failed to analyze `{}`", achitek_path.display()))?;
+    let Some(symbol) = analysis.symbols().iter().find(|symbol| {
+        symbol.kind() == editor::SymbolKind::Prompt && symbol.name() == reference_name
+    }) else {
+        tracing::debug!(
+            ?uri,
+            reference = reference_name,
+            target = ?achitek_uri,
+            "template definition skipped because prompt was not found"
+        );
+        return Ok(None);
+    };
+
+    tracing::debug!(
+        ?uri,
+        reference = reference_name,
+        target = ?achitek_uri,
+        "resolved template definition"
+    );
+
+    Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
+        achitek_uri,
+        to_lsp_range(symbol.selection_range()),
+    ))))
 }
 
 fn to_text_position(position: Position) -> syntax::TextPosition {
@@ -191,6 +266,73 @@ mod test {
         let response = recv_response(&client_connection)?;
         let result: Option<GotoDefinitionResponse> =
             serde_json::from_value(response.result.expect("response should contain a result"))?;
+        let Some(GotoDefinitionResponse::Scalar(location)) = result else {
+            panic!("expected scalar definition response");
+        };
+        assert_eq!(location.uri, achitek_uri);
+        assert_eq!(location.range.start.line, 5);
+
+        fs::remove_dir_all(&temp_root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn handle_open_template_definition_uses_workspace_project() -> anyhow::Result<()> {
+        let temp_root = utils::temp_dir("achitek-workspace-template-definition")?;
+        let project_root = temp_root.join("rust");
+        fs::create_dir_all(&project_root)?;
+        fs::write(
+            temp_root.join("blueprints.toml"),
+            indoc! {r#"
+                [rust]
+                path = "./rust"
+            "#},
+        )?;
+        let achitek_path = project_root.join("achitekfile");
+        fs::write(&achitek_path, reference_source())?;
+        let template_path = project_root.join("Cargo.toml.tera");
+        fs::write(&template_path, "")?;
+        let achitek_uri = utils::path_to_uri(&achitek_path)?;
+        let template_uri = utils::path_to_uri(&template_path)?;
+        let state = ServerState {
+            documents: Documents::from([
+                (
+                    achitek_uri.as_str().to_owned(),
+                    Document {
+                        version: 1,
+                        text: reference_source(),
+                    },
+                ),
+                (
+                    template_uri.as_str().to_owned(),
+                    Document {
+                        version: 1,
+                        text: indoc! {r#"[package]
+                            name = "{{project_name}}"
+                        "#}
+                        .to_owned(),
+                    },
+                ),
+            ]),
+            workspace: crate::workspace::Workspace::discover(&temp_root)?,
+            ..Default::default()
+        };
+
+        let result = super::handle(
+            &state,
+            GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: template_uri },
+                    position: Position {
+                        line: 1,
+                        character: 13,
+                    },
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            },
+        )?;
+
         let Some(GotoDefinitionResponse::Scalar(location)) = result else {
             panic!("expected scalar definition response");
         };
