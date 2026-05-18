@@ -8,33 +8,78 @@
 
 #[cfg(test)]
 use crate::server::{Document, Documents};
-use crate::{editor, server::ServerState, syntax};
+use crate::{
+    editor,
+    server::{ServerState, utils},
+    syntax,
+    workspace::DocumentKind,
+};
 use anyhow::Context;
 #[cfg(test)]
 use lsp_types::Uri;
 use lsp_types::{Position, PrepareRenameResponse, Range, TextDocumentPositionParams};
+use std::fs;
 
 /// Handles a `textDocument/prepareRename` request.
 pub fn handle(
     state: &ServerState,
     params: TextDocumentPositionParams,
 ) -> anyhow::Result<Option<PrepareRenameResponse>> {
-    if let Some(document) = state.documents.get(params.text_document.uri.as_str()) {
-        let analysis = editor::build(&document.text).with_context(|| {
-            format!(
-                "failed to analyze document `{:?}`",
-                params.text_document.uri
-            )
-        })?;
-        Ok(analysis
-            .prepare_rename(to_text_position(params.position))
-            .map(|target| PrepareRenameResponse::RangeWithPlaceholder {
-                range: to_lsp_range(target.range()),
-                placeholder: target.placeholder().to_owned(),
-            }))
-    } else {
-        Ok(None)
+    match state.document_kind(&params.text_document.uri) {
+        DocumentKind::Achitekfile => achitekfile_prepare_rename(state, params),
+        DocumentKind::TeraTemplate => tera_prepare_rename(state, params),
+        DocumentKind::Manifest | DocumentKind::Unknown => Ok(None),
     }
+}
+
+fn achitekfile_prepare_rename(
+    state: &ServerState,
+    params: TextDocumentPositionParams,
+) -> anyhow::Result<Option<PrepareRenameResponse>> {
+    let Some(document) = state.documents.get(params.text_document.uri.as_str()) else {
+        return Ok(None);
+    };
+
+    let analysis = editor::build(&document.text).with_context(|| {
+        format!(
+            "failed to analyze document `{:?}`",
+            params.text_document.uri
+        )
+    })?;
+    Ok(analysis
+        .prepare_rename(to_text_position(params.position))
+        .map(|target| PrepareRenameResponse::RangeWithPlaceholder {
+            range: to_lsp_range(target.range()),
+            placeholder: target.placeholder().to_owned(),
+        }))
+}
+
+fn tera_prepare_rename(
+    state: &ServerState,
+    params: TextDocumentPositionParams,
+) -> anyhow::Result<Option<PrepareRenameResponse>> {
+    let uri = params.text_document.uri;
+    let Some(template_path) = utils::file_path_from_uri(&uri) else {
+        tracing::debug!(?uri, "template prepare rename skipped for non-file URI");
+        return Ok(None);
+    };
+    let source = state
+        .documents
+        .get(uri.as_str())
+        .map(|document| Ok(document.text.clone()))
+        .unwrap_or_else(|| {
+            fs::read_to_string(&template_path)
+                .with_context(|| format!("failed to read template `{}`", template_path.display()))
+        })?;
+
+    Ok(
+        utils::reference_target_at_position(&source, params.position).map(
+            |(placeholder, range)| PrepareRenameResponse::RangeWithPlaceholder {
+                range,
+                placeholder,
+            },
+        ),
+    )
 }
 
 fn to_text_position(position: Position) -> syntax::TextPosition {
@@ -119,6 +164,45 @@ mod test {
             panic!("expected range with placeholder");
         };
         assert_eq!(placeholder, "project_name");
+
+        Ok(())
+    }
+
+    #[test]
+    fn handle_template_prepare_rename_request() -> anyhow::Result<()> {
+        let uri: Uri = "file:///workspace/rust/Cargo.toml.tera".parse()?;
+        let state = ServerState {
+            documents: Documents::from([(
+                uri.as_str().to_owned(),
+                Document {
+                    version: 1,
+                    text: indoc! {r#"[package]
+                        name = "{{project_name}}"
+                    "#}
+                    .to_owned(),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let result = super::handle(
+            &state,
+            TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position {
+                    line: 1,
+                    character: 13,
+                },
+            },
+        )?;
+
+        let Some(PrepareRenameResponse::RangeWithPlaceholder { placeholder, range }) = result
+        else {
+            panic!("expected range with placeholder");
+        };
+        assert_eq!(placeholder, "project_name");
+        assert_eq!(range.start.line, 1);
+        assert_eq!(range.start.character, 10);
 
         Ok(())
     }

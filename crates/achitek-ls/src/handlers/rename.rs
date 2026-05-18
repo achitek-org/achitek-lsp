@@ -13,72 +13,211 @@ use crate::{
     editor,
     server::{ServerState, utils},
     syntax,
+    workspace::DocumentKind,
 };
 use anyhow::Context;
 use lsp_types::{Position, Range, RenameParams, TextEdit, Uri, WorkspaceEdit};
-use std::{collections::HashMap, fs};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 /// Handles a `textDocument/rename` request.
 #[allow(clippy::mutable_key_type)]
 pub fn handle(state: &ServerState, params: RenameParams) -> anyhow::Result<Option<WorkspaceEdit>> {
     let text_document_position = params.text_document_position;
+    let uri = text_document_position.text_document.uri;
+    let position = text_document_position.position;
 
-    if let Some(document) = state
-        .documents
-        .get(text_document_position.text_document.uri.as_str())
-    {
-        let analysis = editor::build(&document.text).with_context(|| {
-            format!(
-                "failed to analyze document `{:?}`",
-                text_document_position.text_document.uri
-            )
-        })?;
-        let cursor_position = to_text_position(text_document_position.position);
-        let Some(prompt_name) = analysis.prompt_name(cursor_position).map(str::to_owned) else {
-            return Ok(None);
-        };
-        let references = analysis.references(cursor_position, true);
-        let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
-
-        for target in references {
-            let range = to_lsp_range(target.range());
-            let replacement = replacement_text_for_range(&document.text, &range, &params.new_name);
-            changes
-                .entry(text_document_position.text_document.uri.clone())
-                .or_default()
-                .push(TextEdit {
-                    range,
-                    new_text: replacement,
-                });
-        }
-
-        if let Some(blueprint_dir) =
-            utils::blueprint_dir_from_uri(&text_document_position.text_document.uri)
-        {
-            for location in utils::scan_references(&blueprint_dir, &prompt_name)? {
-                let Some(path) = utils::file_path_from_uri(&location.uri) else {
-                    continue;
-                };
-                let source = fs::read_to_string(&path).with_context(|| {
-                    format!("failed to read template for rename `{}`", path.display())
-                })?;
-                let replacement =
-                    replacement_text_for_range(&source, &location.range, &params.new_name);
-                changes.entry(location.uri).or_default().push(TextEdit {
-                    range: location.range,
-                    new_text: replacement,
-                });
-            }
-        }
-
-        Ok(Some(WorkspaceEdit {
-            changes: Some(changes),
-            document_changes: None,
-            change_annotations: None,
-        }))
-    } else {
-        Ok(None)
+    match state.document_kind(&uri) {
+        DocumentKind::Achitekfile => achitekfile_rename(state, uri, position, &params.new_name),
+        DocumentKind::TeraTemplate => tera_rename(state, uri, position, &params.new_name),
+        DocumentKind::Manifest | DocumentKind::Unknown => Ok(None),
     }
+}
+
+#[allow(clippy::mutable_key_type)]
+fn achitekfile_rename(
+    state: &ServerState,
+    uri: Uri,
+    position: Position,
+    new_name: &str,
+) -> anyhow::Result<Option<WorkspaceEdit>> {
+    let Some(document) = state.documents.get(uri.as_str()) else {
+        return Ok(None);
+    };
+
+    let analysis = editor::build(&document.text)
+        .with_context(|| format!("failed to analyze document `{:?}`", uri))?;
+    let cursor_position = to_text_position(position);
+    let Some(prompt_name) = analysis.prompt_name(cursor_position).map(str::to_owned) else {
+        return Ok(None);
+    };
+    let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+    add_achitekfile_edits(
+        &mut changes,
+        uri.clone(),
+        &document.text,
+        &analysis,
+        cursor_position,
+        new_name,
+    );
+
+    if let Some(project_root) = project_root_for_uri(state, &uri) {
+        add_template_edits(&mut changes, &project_root, &prompt_name, new_name)?;
+    }
+
+    Ok(Some(WorkspaceEdit {
+        changes: Some(changes),
+        document_changes: None,
+        change_annotations: None,
+    }))
+}
+
+#[allow(clippy::mutable_key_type)]
+fn tera_rename(
+    state: &ServerState,
+    uri: Uri,
+    position: Position,
+    new_name: &str,
+) -> anyhow::Result<Option<WorkspaceEdit>> {
+    let Some(template_path) = utils::file_path_from_uri(&uri) else {
+        tracing::debug!(?uri, "template rename skipped for non-file URI");
+        return Ok(None);
+    };
+
+    let source = state
+        .documents
+        .get(uri.as_str())
+        .map(|document| Ok(document.text.clone()))
+        .unwrap_or_else(|| {
+            fs::read_to_string(&template_path)
+                .with_context(|| format!("failed to read template `{}`", template_path.display()))
+        })?;
+    let Some(prompt_name) = utils::reference_at_position(&source, position) else {
+        tracing::debug!(?uri, ?position, "no template reference under cursor");
+        return Ok(None);
+    };
+
+    let Some(achitek_path) = achitekfile_for_template(state, &template_path) else {
+        tracing::debug!(
+            ?uri,
+            reference = prompt_name,
+            "template rename skipped because no achitekfile was found"
+        );
+        return Ok(None);
+    };
+    let achitek_uri = utils::path_to_uri(&achitek_path)?;
+    let achitek_source = state
+        .documents
+        .get(achitek_uri.as_str())
+        .map(|document| document.text.clone())
+        .unwrap_or_else(|| fs::read_to_string(&achitek_path).unwrap_or_default());
+    let analysis = editor::build(&achitek_source)
+        .with_context(|| format!("failed to analyze `{}`", achitek_path.display()))?;
+    let Some(symbol) = analysis
+        .symbols()
+        .iter()
+        .find(|symbol| symbol.kind() == editor::SymbolKind::Prompt && symbol.name() == prompt_name)
+    else {
+        tracing::debug!(
+            ?uri,
+            reference = prompt_name,
+            target = ?achitek_uri,
+            "template rename skipped because prompt was not found"
+        );
+        return Ok(None);
+    };
+
+    let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+    add_achitekfile_edits(
+        &mut changes,
+        achitek_uri,
+        &achitek_source,
+        &analysis,
+        symbol.selection_range().start_position,
+        new_name,
+    );
+
+    if let Some(project_root) = project_root_for_template(state, &template_path) {
+        add_template_edits(&mut changes, &project_root, &prompt_name, new_name)?;
+    }
+
+    Ok(Some(WorkspaceEdit {
+        changes: Some(changes),
+        document_changes: None,
+        change_annotations: None,
+    }))
+}
+
+#[allow(clippy::mutable_key_type)]
+fn add_achitekfile_edits(
+    changes: &mut HashMap<Uri, Vec<TextEdit>>,
+    uri: Uri,
+    source: &str,
+    analysis: &editor::DocumentModel,
+    position: syntax::TextPosition,
+    new_name: &str,
+) {
+    for target in analysis.references(position, true) {
+        let range = to_lsp_range(target.range());
+        let replacement = replacement_text_for_range(source, &range, new_name);
+        changes.entry(uri.clone()).or_default().push(TextEdit {
+            range,
+            new_text: replacement,
+        });
+    }
+}
+
+#[allow(clippy::mutable_key_type)]
+fn add_template_edits(
+    changes: &mut HashMap<Uri, Vec<TextEdit>>,
+    project_root: &Path,
+    prompt_name: &str,
+    new_name: &str,
+) -> anyhow::Result<()> {
+    for location in utils::scan_references(project_root, prompt_name)? {
+        let Some(path) = utils::file_path_from_uri(&location.uri) else {
+            continue;
+        };
+        let source = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read template for rename `{}`", path.display()))?;
+        let replacement = replacement_text_for_range(&source, &location.range, new_name);
+        changes.entry(location.uri).or_default().push(TextEdit {
+            range: location.range,
+            new_text: replacement,
+        });
+    }
+
+    Ok(())
+}
+
+fn project_root_for_uri(state: &ServerState, uri: &Uri) -> Option<PathBuf> {
+    state
+        .workspace
+        .project_for_uri(uri)
+        .map(|project| project.root().to_path_buf())
+        .or_else(|| utils::blueprint_dir_from_uri(uri))
+}
+
+fn project_root_for_template(state: &ServerState, template_path: &Path) -> Option<PathBuf> {
+    state
+        .workspace
+        .project_for_path(template_path)
+        .map(|project| project.root().to_path_buf())
+        .or_else(|| {
+            utils::find_achitekfile_for_template(template_path)
+                .and_then(|path| path.parent().map(Path::to_path_buf))
+        })
+}
+
+fn achitekfile_for_template(state: &ServerState, template_path: &Path) -> Option<PathBuf> {
+    state
+        .workspace
+        .project_for_path(template_path)
+        .map(|project| project.achitekfile().to_path_buf())
+        .or_else(|| utils::find_achitekfile_for_template(template_path))
 }
 
 fn replacement_text_for_range(source: &str, range: &Range, new_name: &str) -> String {
@@ -250,6 +389,103 @@ mod test {
             .changes
             .expect("workspace edit should contain changes");
         let achitek_edits = changes.get(&uri).expect("Achitekfile should have edits");
+        assert_eq!(achitek_edits.len(), 2);
+        assert!(
+            achitek_edits
+                .iter()
+                .any(|edit| edit.new_text == "\"repository_name\"")
+        );
+        assert!(
+            achitek_edits
+                .iter()
+                .any(|edit| edit.new_text == "repository_name")
+        );
+        let template_edits = changes
+            .get(&template_uri)
+            .expect("template should have edits");
+        assert_eq!(template_edits.len(), 2);
+        assert!(
+            template_edits
+                .iter()
+                .all(|edit| edit.new_text == "repository_name")
+        );
+
+        fs::remove_dir_all(&temp_root)?;
+        Ok(())
+    }
+
+    #[test]
+    #[allow(clippy::mutable_key_type)]
+    fn handle_template_rename_request_uses_workspace_project() -> anyhow::Result<()> {
+        let temp_root = utils::temp_dir("achitek-workspace-template-rename")?;
+        let project_root = temp_root.join("rust");
+        fs::create_dir_all(&project_root)?;
+        fs::write(
+            temp_root.join("blueprints.toml"),
+            indoc! {r#"
+                [rust]
+                path = "./rust"
+            "#},
+        )?;
+        let achitek_path = project_root.join("achitekfile");
+        fs::write(&achitek_path, reference_source())?;
+        let template_path = project_root.join("Cargo.toml.tera");
+        fs::write(
+            &template_path,
+            indoc! {r#"[package]
+                name = "{{project_name}}"
+                repository = "{{project_name}}"
+            "#},
+        )?;
+        let achitek_uri = utils::path_to_uri(&achitek_path)?;
+        let template_uri = utils::path_to_uri(&template_path)?;
+        let state = ServerState {
+            documents: Documents::from([
+                (
+                    achitek_uri.as_str().to_owned(),
+                    Document {
+                        version: 1,
+                        text: reference_source(),
+                    },
+                ),
+                (
+                    template_uri.as_str().to_owned(),
+                    Document {
+                        version: 1,
+                        text: indoc! {r#"[package]
+                            name = "{{project_name}}"
+                            repository = "{{project_name}}"
+                        "#}
+                        .to_owned(),
+                    },
+                ),
+            ]),
+            workspace: crate::workspace::Workspace::discover(&temp_root)?,
+            ..Default::default()
+        };
+
+        let edit = super::handle(
+            &state,
+            RenameParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier {
+                        uri: template_uri.clone(),
+                    },
+                    position: Position {
+                        line: 1,
+                        character: 13,
+                    },
+                },
+                new_name: "repository_name".to_owned(),
+                work_done_progress_params: Default::default(),
+            },
+        )?
+        .expect("workspace edit should be available");
+        let changes = edit.changes.expect("workspace edit should contain changes");
+
+        let achitek_edits = changes
+            .get(&achitek_uri)
+            .expect("achitekfile should have edits");
         assert_eq!(achitek_edits.len(), 2);
         assert!(
             achitek_edits

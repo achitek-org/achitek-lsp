@@ -190,6 +190,13 @@ fn references_in_source(source: &str, uri: &Uri, prompt_name: &str) -> Vec<Locat
 }
 
 pub(crate) fn reference_at_position(source: &str, position: Position) -> Option<String> {
+    reference_target_at_position(source, position).map(|reference| reference.0)
+}
+
+pub(crate) fn reference_target_at_position(
+    source: &str,
+    position: Position,
+) -> Option<(String, Range)> {
     let column = usize::try_from(position.character).ok()?;
 
     identifiers_in_source(source, &"file:///template.tera".parse().ok()?)
@@ -204,7 +211,7 @@ pub(crate) fn reference_at_position(source: &str, position: Position) -> Option<
                     .ok()
                     .is_some_and(|end| column <= end)
         })
-        .map(|reference| reference.name)
+        .map(|reference| (reference.name, reference.location.range))
 }
 
 fn identifiers_in_source(source: &str, uri: &Uri) -> Vec<TemplateReference> {
