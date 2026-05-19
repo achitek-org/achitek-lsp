@@ -53,16 +53,14 @@ pub fn handle(
 fn collect_folding_ranges(symbol: &editor::Symbol, ranges: &mut Vec<FoldingRange>) {
     let range = symbol.range();
 
-    if range.start_position.row < range.end_position.row {
+    if range.start.line < range.end.line {
         ranges.push(FoldingRange {
-            start_line: u32::try_from(range.start_position.row).expect("line should fit into u32"),
+            start_line: u32::try_from(range.start.line).expect("line should fit into u32"),
             start_character: Some(
-                u32::try_from(range.start_position.column).expect("column should fit into u32"),
+                u32::try_from(range.start.byte).expect("column should fit into u32"),
             ),
-            end_line: u32::try_from(range.end_position.row).expect("line should fit into u32"),
-            end_character: Some(
-                u32::try_from(range.end_position.column).expect("column should fit into u32"),
-            ),
+            end_line: u32::try_from(range.end.line).expect("line should fit into u32"),
+            end_character: Some(u32::try_from(range.end.byte).expect("column should fit into u32")),
             kind: None,
             collapsed_text: Some(symbol.name().to_owned()),
         });

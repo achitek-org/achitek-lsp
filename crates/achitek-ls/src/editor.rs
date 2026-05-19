@@ -1,21 +1,65 @@
-//! Editor features for Achitekfile documents.
+//! Achitekfile editor features used by LSP request handlers.
 //!
-//! This module is an LSP-facing adapter for editor interactions that have not
-//! yet moved into the `achitekfile` crate. Diagnostics intentionally live in
-//! the language crates and are converted to LSP diagnostics by `crate::lsp`.
-use crate::syntax::{self, ParseError, SyntaxTree, TextPosition, TextRange};
-use tree_sitter::Node;
+//! This module adapts parsed Achitekfile source into editor-oriented answers
+//! such as hover, completion, definition, references, rename preparation, and
+//! symbols. Achitekfile parsing and source coordinates come from the
+//! `achitekfile` crate; this module stays focused on language-server behavior.
+use achitekfile::{ParseError, TextPosition, TextRange};
+use tree_sitter::{Node, Tree};
+
+/// Parsed source plus the Tree-sitter tree used by editor features.
+#[derive(Debug)]
+pub struct SourceTree {
+    source: String,
+    tree: Tree,
+}
+
+impl SourceTree {
+    /// Returns the original source used to build this syntax tree.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    /// Returns the raw Tree-sitter tree.
+    pub fn tree(&self) -> &Tree {
+        &self.tree
+    }
+
+    /// Returns the root CST node.
+    pub fn root_node(&self) -> Node<'_> {
+        self.tree.root_node()
+    }
+
+    /// Returns the source range occupied by a given node.
+    pub fn range_for(&self, node: Node<'_>) -> TextRange {
+        TextRange {
+            start: TextPosition {
+                line: node.start_position().row,
+                byte: node.start_position().column,
+            },
+            end: TextPosition {
+                line: node.end_position().row,
+                byte: node.end_position().column,
+            },
+        }
+    }
+
+    /// Returns the source text covered by a given node.
+    pub fn text_for<'a>(&'a self, node: Node<'_>) -> &'a str {
+        &self.source[node.byte_range()]
+    }
+}
 
 /// Editor-facing model for a single Achitekfile document.
 #[derive(Debug)]
 pub struct DocumentModel {
-    syntax: SyntaxTree,
+    syntax: SourceTree,
     symbols: Vec<Symbol>,
 }
 
 impl DocumentModel {
     /// Returns the parsed syntax tree for the document.
-    pub fn syntax(&self) -> &SyntaxTree {
+    pub fn syntax(&self) -> &SourceTree {
         &self.syntax
     }
 
@@ -225,7 +269,10 @@ pub enum CompletionKind {
 
 /// Builds editor features for a single Achitek source document.
 pub fn build(source: &str) -> Result<DocumentModel, ParseError> {
-    let syntax = syntax::parse(source)?;
+    let syntax = SourceTree {
+        source: source.to_owned(),
+        tree: achitekfile::parse_tree(source)?,
+    };
     let symbols = collect_symbols(&syntax);
 
     Ok(DocumentModel { syntax, symbols })
@@ -251,13 +298,13 @@ fn find_named_descendant_by_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<
 }
 
 fn definition_for_position(
-    syntax: &SyntaxTree,
+    syntax: &SourceTree,
     symbols: &[Symbol],
     position: TextPosition,
 ) -> Option<DefinitionTarget> {
     let point = tree_sitter::Point {
-        row: position.row,
-        column: position.column,
+        row: position.line,
+        column: position.byte,
     };
     let node = syntax
         .root_node()
@@ -278,13 +325,13 @@ fn definition_for_position(
 }
 
 fn prepare_rename_for_position(
-    syntax: &SyntaxTree,
+    syntax: &SourceTree,
     symbols: &[Symbol],
     position: TextPosition,
 ) -> Option<PrepareRenameTarget> {
     let point = tree_sitter::Point {
-        row: position.row,
-        column: position.column,
+        row: position.line,
+        column: position.byte,
     };
     let node = syntax
         .root_node()
@@ -329,7 +376,7 @@ fn prepare_rename_for_position(
 }
 
 fn references_for_position(
-    syntax: &SyntaxTree,
+    syntax: &SourceTree,
     symbols: &[Symbol],
     position: TextPosition,
     include_declaration: bool,
@@ -355,13 +402,13 @@ fn references_for_position(
 }
 
 fn symbol_name_at_position<'a>(
-    syntax: &'a SyntaxTree,
+    syntax: &'a SourceTree,
     position: TextPosition,
     symbols: &[Symbol],
 ) -> Option<&'a str> {
     let point = tree_sitter::Point {
-        row: position.row,
-        column: position.column,
+        row: position.line,
+        column: position.byte,
     };
     let node = syntax
         .root_node()
@@ -395,7 +442,7 @@ fn symbol_name_at_position<'a>(
 
 fn collect_reference_nodes(
     node: Node<'_>,
-    syntax: &SyntaxTree,
+    syntax: &SourceTree,
     target_name: &str,
     references: &mut Vec<ReferenceTarget>,
 ) {
@@ -417,7 +464,7 @@ fn collect_reference_nodes(
     }
 }
 
-fn identifier_reference_name<'a>(syntax: &'a SyntaxTree, node: Node<'_>) -> Option<&'a str> {
+fn identifier_reference_name<'a>(syntax: &'a SourceTree, node: Node<'_>) -> Option<&'a str> {
     let parent = node.parent()?;
     let is_reference_site = match parent.kind() {
         "simple_dependency" => parent.child_by_field_name("reference") == Some(node),
@@ -434,12 +481,12 @@ fn identifier_reference_name<'a>(syntax: &'a SyntaxTree, node: Node<'_>) -> Opti
 }
 
 fn completions_for_position(
-    syntax: &SyntaxTree,
+    syntax: &SourceTree,
     symbols: &[Symbol],
     position: TextPosition,
 ) -> Vec<Completion> {
-    let line = source_line(syntax.source(), position.row);
-    let prefix = prefix_before_column(line, position.column);
+    let line = source_line(syntax.source(), position.line);
+    let prefix = prefix_before_column(line, position.byte);
     let trimmed = prefix.trim_start();
 
     if trimmed.starts_with("type") {
@@ -474,22 +521,22 @@ fn prefix_before_column(line: &str, column: usize) -> &str {
     &line[..end]
 }
 
-fn in_prompt_block(syntax: &SyntaxTree, position: TextPosition) -> bool {
+fn in_prompt_block(syntax: &SourceTree, position: TextPosition) -> bool {
     ancestor_kinds_at_position(syntax, position).contains(&"prompt_block")
 }
 
-fn in_validate_block(syntax: &SyntaxTree, position: TextPosition) -> bool {
+fn in_validate_block(syntax: &SourceTree, position: TextPosition) -> bool {
     ancestor_kinds_at_position(syntax, position).contains(&"validate_block")
 }
 
-fn in_blueprint_block(syntax: &SyntaxTree, position: TextPosition) -> bool {
+fn in_blueprint_block(syntax: &SourceTree, position: TextPosition) -> bool {
     ancestor_kinds_at_position(syntax, position).contains(&"blueprint_block")
 }
 
-fn ancestor_kinds_at_position(syntax: &SyntaxTree, position: TextPosition) -> Vec<&str> {
+fn ancestor_kinds_at_position(syntax: &SourceTree, position: TextPosition) -> Vec<&str> {
     let point = tree_sitter::Point {
-        row: position.row,
-        column: position.column,
+        row: position.line,
+        column: position.byte,
     };
     let mut kinds = Vec::new();
 
@@ -510,13 +557,13 @@ fn ancestor_kinds_at_position(syntax: &SyntaxTree, position: TextPosition) -> Ve
 }
 
 fn ancestor_node_at_position<'a>(
-    syntax: &'a SyntaxTree,
+    syntax: &'a SourceTree,
     position: TextPosition,
     kind: &str,
 ) -> Option<Node<'a>> {
     let point = tree_sitter::Point {
-        row: position.row,
-        column: position.column,
+        row: position.line,
+        column: position.byte,
     };
     let mut node = syntax
         .root_node()
@@ -571,7 +618,7 @@ fn blueprint_attribute_completions() -> Vec<Completion> {
     ]
 }
 
-fn prompt_attribute_completions(syntax: &SyntaxTree, position: TextPosition) -> Vec<Completion> {
+fn prompt_attribute_completions(syntax: &SourceTree, position: TextPosition) -> Vec<Completion> {
     let prompt_block = ancestor_node_at_position(syntax, position, "prompt_block");
     let prompt_type = prompt_block.and_then(|node| prompt_type_for_block(syntax, node));
     let mut items = vec![
@@ -622,7 +669,7 @@ fn prompt_attribute_completions(syntax: &SyntaxTree, position: TextPosition) -> 
     items
 }
 
-fn validate_attribute_completions(syntax: &SyntaxTree, position: TextPosition) -> Vec<Completion> {
+fn validate_attribute_completions(syntax: &SourceTree, position: TextPosition) -> Vec<Completion> {
     let prompt_block = ancestor_node_at_position(syntax, position, "prompt_block");
     let validate_block = ancestor_node_at_position(syntax, position, "validate_block");
     let prompt_type = prompt_block.and_then(|node| prompt_type_for_block(syntax, node));
@@ -743,10 +790,10 @@ fn completion(label: &str, detail: Option<&str>, kind: CompletionKind) -> Comple
     }
 }
 
-fn hover_for_position(syntax: &SyntaxTree, position: TextPosition) -> Option<Hover> {
+fn hover_for_position(syntax: &SourceTree, position: TextPosition) -> Option<Hover> {
     let point = tree_sitter::Point {
-        row: position.row,
-        column: position.column,
+        row: position.line,
+        column: position.byte,
     };
     let node = syntax
         .root_node()
@@ -827,7 +874,7 @@ fn hover_for_position(syntax: &SyntaxTree, position: TextPosition) -> Option<Hov
     })
 }
 
-fn hover_for_prompt_block(syntax: &SyntaxTree, node: Node<'_>) -> Option<Hover> {
+fn hover_for_prompt_block(syntax: &SourceTree, node: Node<'_>) -> Option<Hover> {
     let name_node = node.child_by_field_name("name")?;
     let name = syntax.text_for(name_node).trim_matches('"');
     let prompt_type = prompt_type_for_block(syntax, node).unwrap_or("unknown");
@@ -840,7 +887,7 @@ fn hover_for_prompt_block(syntax: &SyntaxTree, node: Node<'_>) -> Option<Hover> 
     ))
 }
 
-fn hover_for_blueprint_attribute_key(syntax: &SyntaxTree, node: Node<'_>) -> Option<Hover> {
+fn hover_for_blueprint_attribute_key(syntax: &SourceTree, node: Node<'_>) -> Option<Hover> {
     let key = syntax.text_for(node);
     let description = match key {
         "version" => "Declares the Achitekfile schema version.",
@@ -859,7 +906,7 @@ fn hover_for_blueprint_attribute_key(syntax: &SyntaxTree, node: Node<'_>) -> Opt
     ))
 }
 
-fn hover_for_prompt_type(syntax: &SyntaxTree, node: Node<'_>) -> Option<Hover> {
+fn hover_for_prompt_type(syntax: &SourceTree, node: Node<'_>) -> Option<Hover> {
     let prompt_type = syntax.text_for(node);
     let description = match prompt_type {
         "string" => "A single-line text prompt.",
@@ -876,7 +923,7 @@ fn hover_for_prompt_type(syntax: &SyntaxTree, node: Node<'_>) -> Option<Hover> {
     ))
 }
 
-fn prompt_type_for_block<'a>(syntax: &'a SyntaxTree, prompt_block: Node<'_>) -> Option<&'a str> {
+fn prompt_type_for_block<'a>(syntax: &'a SourceTree, prompt_block: Node<'_>) -> Option<&'a str> {
     for index in 0..prompt_block.child_count() {
         let Some(child) =
             prompt_block.child(u32::try_from(index).expect("child index should fit into u32"))
@@ -910,7 +957,7 @@ fn simple_hover(range: TextRange, contents: impl Into<String>) -> Hover {
     }
 }
 
-fn collect_symbols(syntax: &SyntaxTree) -> Vec<Symbol> {
+fn collect_symbols(syntax: &SourceTree) -> Vec<Symbol> {
     let root = syntax.root_node();
     let mut symbols = Vec::new();
 
@@ -931,7 +978,7 @@ fn collect_symbols(syntax: &SyntaxTree) -> Vec<Symbol> {
     symbols
 }
 
-fn blueprint_symbol(syntax: &SyntaxTree, node: Node<'_>) -> Symbol {
+fn blueprint_symbol(syntax: &SourceTree, node: Node<'_>) -> Symbol {
     let range = syntax.range_for(node);
 
     Symbol {
@@ -944,7 +991,7 @@ fn blueprint_symbol(syntax: &SyntaxTree, node: Node<'_>) -> Symbol {
     }
 }
 
-fn prompt_symbol(syntax: &SyntaxTree, node: Node<'_>) -> Symbol {
+fn prompt_symbol(syntax: &SourceTree, node: Node<'_>) -> Symbol {
     let range = syntax.range_for(node);
     let name_node = node
         .child_by_field_name("name")
@@ -963,7 +1010,7 @@ fn prompt_symbol(syntax: &SyntaxTree, node: Node<'_>) -> Symbol {
     }
 }
 
-fn collect_prompt_children(syntax: &SyntaxTree, prompt_node: Node<'_>) -> Vec<Symbol> {
+fn collect_prompt_children(syntax: &SourceTree, prompt_node: Node<'_>) -> Vec<Symbol> {
     let mut children = Vec::new();
 
     for index in 0..prompt_node.child_count() {
@@ -1009,7 +1056,7 @@ mod tests {
         "#};
 
         let analysis = build(source).expect("valid source should build");
-        let completions = analysis.completions(TextPosition { row: 7, column: 2 });
+        let completions = analysis.completions(TextPosition { line: 7, byte: 2 });
 
         assert!(!completions.iter().any(|item| item.label() == "type"));
         assert!(!completions.iter().any(|item| item.label() == "choices"));
@@ -1035,7 +1082,7 @@ mod tests {
         "#};
 
         let analysis = build(source).expect("valid source should build");
-        let completions = analysis.completions(TextPosition { row: 10, column: 4 });
+        let completions = analysis.completions(TextPosition { line: 10, byte: 4 });
 
         assert!(
             completions
@@ -1094,7 +1141,7 @@ mod tests {
 
         let analysis = build(source).expect("valid source should build");
         let hover = analysis
-            .hover(TextPosition { row: 6, column: 9 })
+            .hover(TextPosition { line: 6, byte: 9 })
             .expect("hover should exist for prompt type");
 
         assert!(hover.contents().contains("`string`"));
@@ -1115,7 +1162,7 @@ mod tests {
         "#};
 
         let analysis = build(source).expect("valid source should build");
-        let completions = analysis.completions(TextPosition { row: 6, column: 9 });
+        let completions = analysis.completions(TextPosition { line: 6, byte: 9 });
 
         assert!(completions.iter().any(|item| item.label() == "string"));
         assert!(completions.iter().any(|item| item.label() == "paragraph"));
@@ -1142,10 +1189,7 @@ mod tests {
         "#};
 
         let analysis = build(source).expect("valid source should build");
-        let completions = analysis.completions(TextPosition {
-            row: 13,
-            column: 15,
-        });
+        let completions = analysis.completions(TextPosition { line: 13, byte: 15 });
 
         assert!(completions.iter().any(|item| item.label() == "all"));
         assert!(
@@ -1177,14 +1221,11 @@ mod tests {
 
         let analysis = build(source).expect("valid source should build");
         let definition = analysis
-            .definition(TextPosition {
-                row: 13,
-                column: 16,
-            })
+            .definition(TextPosition { line: 13, byte: 16 })
             .expect("definition should exist for prompt reference");
 
-        assert_eq!(definition.selection_range().start_position.row, 5);
-        assert_eq!(definition.selection_range().start_position.column, 7);
+        assert_eq!(definition.selection_range().start.line, 5);
+        assert_eq!(definition.selection_range().start.byte, 7);
     }
 
     #[test]
@@ -1208,11 +1249,11 @@ mod tests {
         "#};
 
         let analysis = build(source).expect("valid source should build");
-        let references = analysis.references(TextPosition { row: 5, column: 9 }, true);
+        let references = analysis.references(TextPosition { line: 5, byte: 9 }, true);
 
         assert_eq!(references.len(), 2);
-        assert_eq!(references[0].range().start_position.row, 5);
-        assert_eq!(references[1].range().start_position.row, 13);
+        assert_eq!(references[0].range().start.line, 5);
+        assert_eq!(references[1].range().start.line, 13);
     }
 
     #[test]
@@ -1230,12 +1271,12 @@ mod tests {
 
         let analysis = build(source).expect("valid source should build");
         let target = analysis
-            .prepare_rename(TextPosition { row: 5, column: 10 })
+            .prepare_rename(TextPosition { line: 5, byte: 10 })
             .expect("prepare rename should exist for prompt definition");
 
         assert_eq!(target.placeholder(), "project_name");
-        assert_eq!(target.range().start_position.row, 5);
-        assert_eq!(target.range().start_position.column, 7);
+        assert_eq!(target.range().start.line, 5);
+        assert_eq!(target.range().start.byte, 7);
     }
 
     #[test]
@@ -1258,14 +1299,11 @@ mod tests {
 
         let analysis = build(source).expect("valid source should build");
         let target = analysis
-            .prepare_rename(TextPosition {
-                row: 11,
-                column: 16,
-            })
+            .prepare_rename(TextPosition { line: 11, byte: 16 })
             .expect("prepare rename should exist for prompt reference");
 
         assert_eq!(target.placeholder(), "project_name");
-        assert_eq!(target.range().start_position.row, 11);
-        assert_eq!(target.range().start_position.column, 15);
+        assert_eq!(target.range().start.line, 11);
+        assert_eq!(target.range().start.byte, 15);
     }
 }

@@ -8,7 +8,7 @@
 
 #[cfg(test)]
 use crate::server::{Document, Documents};
-use crate::{editor, server::ServerState, syntax};
+use crate::{editor, server::ServerState};
 use anyhow::Context;
 #[cfg(test)]
 use lsp_types::Uri;
@@ -60,10 +60,10 @@ fn to_lsp_completion_item(item: editor::Completion) -> CompletionItem {
 }
 
 /// Converts an LSP position into an editor position.
-fn to_text_position(position: Position) -> syntax::TextPosition {
-    syntax::TextPosition {
-        row: usize::try_from(position.line).expect("line should fit into usize"),
-        column: usize::try_from(position.character).expect("character should fit into usize"),
+fn to_text_position(position: Position) -> achitekfile::TextPosition {
+    achitekfile::TextPosition {
+        line: usize::try_from(position.line).expect("line should fit into usize"),
+        byte: usize::try_from(position.character).expect("character should fit into usize"),
     }
 }
 

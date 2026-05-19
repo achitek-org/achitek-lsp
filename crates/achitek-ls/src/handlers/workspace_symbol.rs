@@ -8,7 +8,7 @@
 
 #[cfg(test)]
 use crate::server::{Document, Documents};
-use crate::{editor, server::ServerState, syntax};
+use crate::{editor, server::ServerState};
 use anyhow::Context;
 use lsp_types::{
     Location, Position, Range, SymbolInformation, SymbolKind as LspSymbolKind, Uri,
@@ -61,17 +61,17 @@ fn to_lsp_symbol_information(uri: &Uri, symbol: &editor::Symbol) -> SymbolInform
     }
 }
 
-fn to_lsp_range(range: syntax::TextRange) -> Range {
+fn to_lsp_range(range: achitekfile::TextRange) -> Range {
     Range {
-        start: to_lsp_position(range.start_position),
-        end: to_lsp_position(range.end_position),
+        start: to_lsp_position(range.start),
+        end: to_lsp_position(range.end),
     }
 }
 
-fn to_lsp_position(position: syntax::TextPosition) -> Position {
+fn to_lsp_position(position: achitekfile::TextPosition) -> Position {
     Position {
-        line: u32::try_from(position.row).expect("line should fit into u32"),
-        character: u32::try_from(position.column).expect("column should fit into u32"),
+        line: u32::try_from(position.line).expect("line should fit into u32"),
+        character: u32::try_from(position.byte).expect("column should fit into u32"),
     }
 }
 

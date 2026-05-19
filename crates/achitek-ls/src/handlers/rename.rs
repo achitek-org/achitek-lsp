@@ -12,7 +12,6 @@ use crate::server::{Document, Documents};
 use crate::{
     editor,
     server::{ServerState, project::ProjectContext, utils},
-    syntax,
     workspace::DocumentKind,
 };
 use anyhow::Context;
@@ -121,7 +120,7 @@ fn tera_rename(
         achitek_uri,
         &achitek_source,
         &analysis,
-        symbol.selection_range().start_position,
+        symbol.selection_range().start,
         new_name,
     );
 
@@ -140,7 +139,7 @@ fn add_achitekfile_edits(
     uri: Uri,
     source: &str,
     analysis: &editor::DocumentModel,
-    position: syntax::TextPosition,
+    position: achitekfile::TextPosition,
     new_name: &str,
 ) {
     for target in analysis.references(position, true) {
@@ -197,24 +196,24 @@ fn selected_text<'a>(source: &'a str, range: &Range) -> Option<&'a str> {
     line.get(start..end)
 }
 
-fn to_text_position(position: Position) -> syntax::TextPosition {
-    syntax::TextPosition {
-        row: usize::try_from(position.line).expect("line should fit into usize"),
-        column: usize::try_from(position.character).expect("character should fit into usize"),
+fn to_text_position(position: Position) -> achitekfile::TextPosition {
+    achitekfile::TextPosition {
+        line: usize::try_from(position.line).expect("line should fit into usize"),
+        byte: usize::try_from(position.character).expect("character should fit into usize"),
     }
 }
 
-fn to_lsp_range(range: syntax::TextRange) -> Range {
+fn to_lsp_range(range: achitekfile::TextRange) -> Range {
     Range {
-        start: to_lsp_position(range.start_position),
-        end: to_lsp_position(range.end_position),
+        start: to_lsp_position(range.start),
+        end: to_lsp_position(range.end),
     }
 }
 
-fn to_lsp_position(position: syntax::TextPosition) -> Position {
+fn to_lsp_position(position: achitekfile::TextPosition) -> Position {
     Position {
-        line: u32::try_from(position.row).expect("line should fit into u32"),
-        character: u32::try_from(position.column).expect("column should fit into u32"),
+        line: u32::try_from(position.line).expect("line should fit into u32"),
+        character: u32::try_from(position.byte).expect("column should fit into u32"),
     }
 }
 

@@ -12,7 +12,7 @@
 
 #[cfg(test)]
 use crate::server::{Document, Documents};
-use crate::{editor, server::ServerState, syntax};
+use crate::{editor, server::ServerState};
 use anyhow::Context;
 #[cfg(test)]
 use lsp_types::Uri;
@@ -53,9 +53,9 @@ fn selection_range_for_position(
     analysis: &editor::DocumentModel,
     position: Position,
 ) -> Option<SelectionRange> {
-    let position = syntax::TextPosition {
-        row: usize::try_from(position.line).ok()?,
-        column: usize::try_from(position.character).ok()?,
+    let position = achitekfile::TextPosition {
+        line: usize::try_from(position.line).ok()?,
+        byte: usize::try_from(position.character).ok()?,
     };
     let mut candidates = Vec::new();
 
@@ -65,14 +65,8 @@ fn selection_range_for_position(
 
     candidates.sort_by_key(|range| {
         (
-            range
-                .end_position
-                .row
-                .saturating_sub(range.start_position.row),
-            range
-                .end_position
-                .column
-                .saturating_sub(range.start_position.column),
+            range.end.line.saturating_sub(range.start.line),
+            range.end.byte.saturating_sub(range.start.byte),
         )
     });
 
@@ -90,8 +84,8 @@ fn selection_range_for_position(
 /// Collects symbol ranges that contain the requested position.
 fn collect_selection_candidates(
     symbol: &editor::Symbol,
-    position: syntax::TextPosition,
-    candidates: &mut Vec<syntax::TextRange>,
+    position: achitekfile::TextPosition,
+    candidates: &mut Vec<achitekfile::TextRange>,
 ) {
     if contains_position(symbol.selection_range(), position) {
         candidates.push(symbol.selection_range());
@@ -106,28 +100,26 @@ fn collect_selection_candidates(
 }
 
 /// Returns true when a position is inside a source range.
-fn contains_position(range: syntax::TextRange, position: syntax::TextPosition) -> bool {
-    (position.row > range.start_position.row
-        || (position.row == range.start_position.row
-            && position.column >= range.start_position.column))
-        && (position.row < range.end_position.row
-            || (position.row == range.end_position.row
-                && position.column <= range.end_position.column))
+fn contains_position(range: achitekfile::TextRange, position: achitekfile::TextPosition) -> bool {
+    (position.line > range.start.line
+        || (position.line == range.start.line && position.byte >= range.start.byte))
+        && (position.line < range.end.line
+            || (position.line == range.end.line && position.byte <= range.end.byte))
 }
 
 /// Converts an editor text range into an LSP range.
-fn to_lsp_range(range: syntax::TextRange) -> Range {
+fn to_lsp_range(range: achitekfile::TextRange) -> Range {
     Range {
-        start: to_lsp_position(range.start_position),
-        end: to_lsp_position(range.end_position),
+        start: to_lsp_position(range.start),
+        end: to_lsp_position(range.end),
     }
 }
 
 /// Converts a zero-based editor text position into an LSP position.
-fn to_lsp_position(position: syntax::TextPosition) -> Position {
+fn to_lsp_position(position: achitekfile::TextPosition) -> Position {
     Position {
-        line: u32::try_from(position.row).expect("line should fit into u32"),
-        character: u32::try_from(position.column).expect("column should fit into u32"),
+        line: u32::try_from(position.line).expect("line should fit into u32"),
+        character: u32::try_from(position.byte).expect("column should fit into u32"),
     }
 }
 

@@ -8,6 +8,4 @@ pub mod lsp;
 #[doc(hidden)]
 pub mod server;
 #[doc(hidden)]
-pub mod syntax;
-#[doc(hidden)]
 pub mod workspace;
