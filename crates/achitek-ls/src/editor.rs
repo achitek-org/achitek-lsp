@@ -269,11 +269,14 @@ pub enum CompletionKind {
 
 /// Builds editor features for a single Achitek source document.
 pub fn build(source: &str) -> Result<DocumentModel, ParseError> {
+    let tree = achitekfile::parse_tree(source)?;
+    let analysis =
+        achitekfile::analyze(source).expect("analysis should not fail after parsing succeeds");
     let syntax = SourceTree {
         source: source.to_owned(),
-        tree: achitekfile::parse_tree(source)?,
+        tree,
     };
-    let symbols = collect_symbols(&syntax);
+    let symbols = collect_symbols(&syntax, &analysis);
 
     Ok(DocumentModel { syntax, symbols })
 }
@@ -957,9 +960,52 @@ fn simple_hover(range: TextRange, contents: impl Into<String>) -> Hover {
     }
 }
 
-fn collect_symbols(syntax: &SourceTree) -> Vec<Symbol> {
-    let root = syntax.root_node();
+fn collect_symbols(syntax: &SourceTree, analysis: &achitekfile::Analysis<'_>) -> Vec<Symbol> {
     let mut symbols = Vec::new();
+
+    if let Some(range) = analysis.file().blueprint().range {
+        symbols.push(Symbol {
+            name: "blueprint".to_owned(), // NOTE: Can we use tree-sitter attribute?
+            detail: None,
+            kind: SymbolKind::Blueprint,
+            range,
+            selection_range: range,
+            children: Vec::new(),
+        });
+    }
+
+    for prompt in analysis.file().prompts() {
+        symbols.push(prompt_symbol(syntax, prompt));
+    }
+
+    symbols
+}
+
+fn prompt_symbol(
+    syntax: &SourceTree,
+    prompt: &achitekfile::model::Spanned<achitekfile::model::Prompt>,
+) -> Symbol {
+    let prompt_block = prompt_block_for_range(syntax, prompt.range);
+    let selection_range = prompt_block
+        .and_then(|node| node.child_by_field_name("name"))
+        .map(|node| syntax.range_for(node))
+        .unwrap_or(prompt.range);
+    let children = prompt_block
+        .map(|node| collect_prompt_children(syntax, node))
+        .unwrap_or_default();
+
+    Symbol {
+        name: prompt.value.name.clone(),
+        detail: Some("prompt".to_owned()),
+        kind: SymbolKind::Prompt,
+        range: prompt.range,
+        selection_range,
+        children,
+    }
+}
+
+fn prompt_block_for_range<'a>(syntax: &'a SourceTree, range: TextRange) -> Option<Node<'a>> {
+    let root = syntax.root_node();
 
     for index in 0..root.child_count() {
         let Some(child) =
@@ -968,46 +1014,12 @@ fn collect_symbols(syntax: &SourceTree) -> Vec<Symbol> {
             continue;
         };
 
-        match child.kind() {
-            "blueprint_block" => symbols.push(blueprint_symbol(syntax, child)),
-            "prompt_block" => symbols.push(prompt_symbol(syntax, child)),
-            _ => {}
+        if child.kind() == "prompt_block" && syntax.range_for(child) == range {
+            return Some(child);
         }
     }
 
-    symbols
-}
-
-fn blueprint_symbol(syntax: &SourceTree, node: Node<'_>) -> Symbol {
-    let range = syntax.range_for(node);
-
-    Symbol {
-        name: "blueprint".to_owned(),
-        detail: None,
-        kind: SymbolKind::Blueprint,
-        range,
-        selection_range: range,
-        children: Vec::new(),
-    }
-}
-
-fn prompt_symbol(syntax: &SourceTree, node: Node<'_>) -> Symbol {
-    let range = syntax.range_for(node);
-    let name_node = node
-        .child_by_field_name("name")
-        .expect("prompt_block should have a name field");
-    let selection_range = syntax.range_for(name_node);
-    let name = syntax.text_for(name_node).trim_matches('"').to_owned();
-    let children = collect_prompt_children(syntax, node);
-
-    Symbol {
-        name,
-        detail: Some("prompt".to_owned()),
-        kind: SymbolKind::Prompt,
-        range,
-        selection_range,
-        children,
-    }
+    None
 }
 
 fn collect_prompt_children(syntax: &SourceTree, prompt_node: Node<'_>) -> Vec<Symbol> {
