@@ -198,7 +198,18 @@ fn tera_tag_context(line: &str, start: usize, end: usize) -> bool {
 }
 
 fn is_inside_quoted_template_string(line: &str, start: usize, end: usize) -> bool {
-    line[..start].chars().filter(|ch| *ch == '"').count() % 2 == 1 && line[end..].contains('"')
+    is_inside_template_string_delimited_by(line, start, end, '"')
+        || is_inside_template_string_delimited_by(line, start, end, '\'')
+}
+
+fn is_inside_template_string_delimited_by(
+    line: &str,
+    start: usize,
+    end: usize,
+    delimiter: char,
+) -> bool {
+    line[..start].chars().filter(|ch| *ch == delimiter).count() % 2 == 1
+        && line[end..].contains(delimiter)
 }
 
 fn is_identifier_start(ch: char) -> bool {
@@ -248,14 +259,7 @@ pub(crate) fn find_achitekfile_for_template(template_path: &Path) -> Option<Path
 }
 
 pub fn blueprint_dir_from_uri(uri: &Uri) -> Option<PathBuf> {
-    let raw = uri.as_str();
-    let path = raw.strip_prefix("file://")?;
-    let path = if cfg!(windows) && path.starts_with('/') {
-        &path[1..]
-    } else {
-        path
-    };
-    Path::new(path).parent().map(Path::to_path_buf)
+    file_path_from_uri(uri).and_then(|path| path.parent().map(Path::to_path_buf))
 }
 
 pub fn file_path_from_uri(uri: &Uri) -> Option<PathBuf> {
@@ -266,7 +270,7 @@ pub fn file_path_from_uri(uri: &Uri) -> Option<PathBuf> {
     } else {
         path
     };
-    Some(PathBuf::from(path))
+    Some(PathBuf::from(percent_decode(path)?))
 }
 
 pub fn is_tera_uri(uri: &Uri) -> bool {
@@ -274,17 +278,60 @@ pub fn is_tera_uri(uri: &Uri) -> bool {
 }
 
 pub(crate) fn is_tera_path(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()) == Some("tera")
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.contains(".tera"))
 }
 
 pub fn path_to_uri(path: &Path) -> anyhow::Result<Uri> {
     let path = path
         .canonicalize()
         .with_context(|| format!("failed to canonicalize `{}`", path.display()))?;
-    let value = format!("file://{}", path.to_string_lossy());
+    let value = format!("file://{}", percent_encode_path(&path));
     value
         .parse()
         .with_context(|| format!("failed to parse `{value}` as a URI"))
+}
+
+fn percent_encode_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                vec![char::from(byte)]
+            }
+            byte => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = *bytes.get(index + 1)?;
+            let low = *bytes.get(index + 2)?;
+            decoded.push(hex_value(high)? * 16 + hex_value(low)?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -340,6 +387,47 @@ mod test {
         assert_eq!(references[0].range.start.character, 16);
 
         fs::remove_dir_all(&temp_root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn detects_templated_tera_file_names() {
+        assert!(is_tera_path(Path::new("Cargo.toml.tera")));
+        assert!(is_tera_path(Path::new(
+            "{% if kind == 'bin' %}main.rs.tera{% else %}lib.rs.tera{% endif %}"
+        )));
+    }
+
+    #[test]
+    fn converts_templated_paths_to_file_uris() -> anyhow::Result<()> {
+        let temp_root = utils::temp_dir("achitek-templated-path-uri")?;
+        fs::create_dir_all(&temp_root)?;
+        let path =
+            temp_root.join("{% if kind == 'bin' %}main.rs.tera{% else %}lib.rs.tera{% endif %}");
+        fs::write(&path, "")?;
+
+        let uri = path_to_uri(&path)?;
+
+        assert!(uri.as_str().contains("%7B%25%20if%20kind"));
+        assert_eq!(file_path_from_uri(&uri), Some(path.canonicalize()?));
+
+        fs::remove_dir_all(&temp_root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn template_references_include_variables_in_tags_but_not_string_literals() -> anyhow::Result<()>
+    {
+        let uri = "file:///template.tera".parse()?;
+        let references = template_references_in_source(
+            r#"{% if kind == "lib" -%}{% elif kind == 'bin' -%}"#,
+            &uri,
+        )
+        .into_iter()
+        .map(|reference| reference.name)
+        .collect::<Vec<_>>();
+
+        assert_eq!(references, vec!["kind", "kind"]);
         Ok(())
     }
 }

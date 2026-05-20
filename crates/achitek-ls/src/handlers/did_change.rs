@@ -63,7 +63,7 @@ mod test {
     use indoc::indoc;
     use lsp_server::{Connection, Message, Notification};
     use lsp_types::{
-        PublishDiagnosticsParams, VersionedTextDocumentIdentifier,
+        NumberOrString, PublishDiagnosticsParams, VersionedTextDocumentIdentifier,
         notification::{DidChangeTextDocument, Notification as LspNotification},
     };
     use std::{fs, time::Duration};
@@ -222,6 +222,61 @@ mod test {
             achitek_diagnostics.diagnostics[0].message,
             "prompt `project_name` is not used by any template"
         );
+
+        fs::remove_dir_all(&temp_root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn handle_template_change_publishes_unknown_prompt_diagnostics() -> anyhow::Result<()> {
+        let temp_root = utils::temp_dir("achitek-did-change-template-unknown-prompt")?;
+        fs::create_dir_all(&temp_root)?;
+        let achitek_path = temp_root.join("Achitekfile");
+        fs::write(&achitek_path, source())?;
+        let template_path = temp_root.join("Cargo.toml.tera");
+        fs::write(&template_path, "")?;
+        let achitek_uri = utils::path_to_uri(&achitek_path)?;
+        let template_uri = utils::path_to_uri(&template_path)?;
+        let template_source = r#"name = "{{ missing_prompt }}""#;
+        let (server_connection, client_connection) = Connection::memory();
+        let mut documents = Documents::from([(
+            template_uri.as_str().to_owned(),
+            Document {
+                version: 1,
+                text: String::new(),
+            },
+        )]);
+        let notification = Notification::new(
+            DidChangeTextDocument::METHOD.to_owned(),
+            DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier {
+                    uri: template_uri.clone(),
+                    version: 2,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: template_source.to_owned(),
+                }],
+            },
+        );
+
+        handle(&server_connection, &notification, &mut documents)?;
+
+        let template_diagnostics = recv_publish_diagnostics(&client_connection)?;
+        assert_eq!(template_diagnostics.uri, template_uri);
+        assert_eq!(template_diagnostics.version, Some(2));
+        assert_eq!(template_diagnostics.diagnostics.len(), 1);
+        assert_eq!(
+            template_diagnostics.diagnostics[0].code,
+            Some(NumberOrString::String("ACHLS0001".to_owned()))
+        );
+        assert_eq!(
+            template_diagnostics.diagnostics[0].message,
+            "unknown prompt reference `missing_prompt`"
+        );
+        let achitek_diagnostics = recv_publish_diagnostics(&client_connection)?;
+        assert_eq!(achitek_diagnostics.uri, achitek_uri);
 
         fs::remove_dir_all(&temp_root)?;
         Ok(())

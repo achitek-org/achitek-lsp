@@ -96,6 +96,31 @@ pub(crate) fn template_diagnostics(
     Ok(diagnostics)
 }
 
+pub(crate) fn template_project_diagnostics(
+    uri: &Uri,
+    state: &ServerState,
+) -> anyhow::Result<Vec<Diagnostic>> {
+    let Some(project) = ProjectContext::for_uri(state, uri) else {
+        return Ok(Vec::new());
+    };
+    let Some(template_path) = utils::file_path_from_uri(uri) else {
+        return Ok(Vec::new());
+    };
+
+    let prompt_names = prompt_ranges(&project.achitekfile_source()?)
+        .with_context(|| {
+            format!(
+                "failed to analyze `{}`",
+                project.achitekfile_path().display()
+            )
+        })?
+        .into_keys()
+        .collect::<HashSet<_>>();
+    let source = project.template_source(uri, &template_path)?;
+
+    Ok(unknown_prompt_diagnostics(&source, uri, &prompt_names))
+}
+
 fn prompt_ranges(source: &str) -> anyhow::Result<HashMap<String, Range>> {
     let analysis = achitekfile::analyze(source)?;
     Ok(analysis
@@ -120,10 +145,19 @@ fn template_references(project: &ProjectContext<'_>) -> anyhow::Result<Vec<Templ
                 template_path.display()
             )
         })?;
+        references.extend(template_path_references(&template_path, &template_uri));
         let source = project.template_source(&template_uri, &template_path)?;
         references.extend(utils::template_references_in_source(&source, &template_uri));
     }
     Ok(references)
+}
+
+fn template_path_references(path: &Path, uri: &Uri) -> Vec<TemplateReference> {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+
+    utils::template_references_in_source(file_name, uri)
 }
 
 fn template_paths(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
@@ -307,6 +341,55 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn template_project_diagnostics_reports_unknown_prompt_references_for_one_template()
+    -> anyhow::Result<()> {
+        let temp_root = utils::temp_dir("achitek-project-single-template-unknown-prompt")?;
+        fs::create_dir_all(&temp_root)?;
+        let achitek_path = temp_root.join("Achitekfile");
+        fs::write(&achitek_path, source())?;
+        let template_path = temp_root.join("Cargo.toml.tera");
+        fs::write(&template_path, r#"name = "{{missing_prompt}}""#)?;
+        let template_uri = utils::path_to_uri(&template_path)?;
+        let state = ServerState::default();
+
+        let diagnostics = template_project_diagnostics(&template_uri, &state)?;
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].code,
+            Some(NumberOrString::String(UNKNOWN_PROMPT_CODE.to_owned()))
+        );
+        assert_eq!(
+            diagnostics[0].message,
+            "unknown prompt reference `missing_prompt`"
+        );
+
+        fs::remove_dir_all(&temp_root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn achitekfile_diagnostics_counts_prompt_references_in_templated_file_names()
+    -> anyhow::Result<()> {
+        let temp_root = utils::temp_dir("achitek-project-templated-file-name-reference")?;
+        fs::create_dir_all(temp_root.join("src"))?;
+        let achitek_path = temp_root.join("Achitekfile");
+        fs::write(&achitek_path, source_with_kind())?;
+        let template_path = temp_root
+            .join("src/{% if kind == 'bin' %}main.rs.tera{% else %}lib.rs.tera{% endif %}");
+        fs::write(&template_path, "")?;
+        let achitek_uri = utils::path_to_uri(&achitek_path)?;
+        let state = ServerState::default();
+
+        let diagnostics = achitekfile_diagnostics(&achitek_uri, &state)?;
+
+        assert!(diagnostics.is_empty());
+
+        fs::remove_dir_all(&temp_root)?;
+        Ok(())
+    }
+
     fn source() -> String {
         indoc! {r#"
             blueprint {
@@ -320,6 +403,22 @@ mod tests {
 
             prompt "repository_name" {
               type = string
+            }
+        "#}
+        .to_owned()
+    }
+
+    fn source_with_kind() -> String {
+        indoc! {r#"
+            blueprint {
+              version = "1.0.0"
+              name = "minimal"
+            }
+
+            prompt "kind" {
+              type = select
+              help = "--bin or --lib"
+              choices = ["bin", "lib"]
             }
         "#}
         .to_owned()

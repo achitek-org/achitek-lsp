@@ -22,8 +22,16 @@ pub fn publish(connection: &Connection, uri: &Uri, state: &ServerState) -> anyho
     };
 
     let mut diagnostics = diagnostics_for_document(state.document_kind(uri), uri, &document.text)?;
-    if state.document_kind(uri) == DocumentKind::Achitekfile {
-        diagnostics.extend(project_diagnostics::achitekfile_diagnostics(uri, state)?);
+    match state.document_kind(uri) {
+        DocumentKind::Achitekfile => {
+            diagnostics.extend(project_diagnostics::achitekfile_diagnostics(uri, state)?);
+        }
+        DocumentKind::TeraTemplate => {
+            diagnostics.extend(project_diagnostics::template_project_diagnostics(
+                uri, state,
+            )?);
+        }
+        DocumentKind::Manifest | DocumentKind::Unknown => {}
     }
     tracing::debug!(
         ?uri,
