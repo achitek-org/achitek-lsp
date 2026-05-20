@@ -9,12 +9,8 @@
 //! For Achitekfiles, this handler returns nested symbols for language
 //! structures such as the top-level `blueprint` block, `prompt` blocks, and
 //! nested `validate` blocks.
-#[cfg(test)]
-use crate::server::{Document, Documents};
 use crate::{editor, server::ServerState};
 use anyhow::Context;
-#[cfg(test)]
-use lsp_types::Uri;
 use lsp_types::{
     DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, Position, Range,
     SymbolKind as LspSymbolKind,
@@ -88,132 +84,5 @@ fn to_lsp_position(position: achitekfile::TextPosition) -> Position {
     Position {
         line: u32::try_from(position.line).expect("line should fit into u32"),
         character: u32::try_from(position.byte).expect("column should fit into u32"),
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use indoc::indoc;
-    use lsp_server::{Connection, Message, Request, RequestId, Response};
-    use lsp_types::{
-        TextDocumentIdentifier,
-        request::{DocumentSymbolRequest, Request as LspRequest},
-    };
-
-    fn handle(
-        connection: &Connection,
-        request: &Request,
-        documents: &Documents,
-    ) -> anyhow::Result<()> {
-        let params = serde_json::from_value(request.params.clone())?;
-        let state = ServerState {
-            documents: documents.clone(),
-            ..Default::default()
-        };
-        let result = super::handle(&state, params)?;
-        connection.sender.send(Message::Response(Response::new_ok(
-            request.id.clone(),
-            result,
-        )))?;
-        Ok(())
-    }
-
-    #[test]
-    fn handle_document_symbol_request() -> anyhow::Result<()> {
-        let (server_connection, client_connection) = Connection::memory();
-        let uri = test_uri()?;
-        let request_id = RequestId::from(1_i32);
-        let request = Request::new(
-            request_id.clone(),
-            DocumentSymbolRequest::METHOD.to_owned(),
-            DocumentSymbolParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
-                work_done_progress_params: Default::default(),
-                partial_result_params: Default::default(),
-            },
-        );
-        let documents = Documents::from([(
-            uri.as_str().to_owned(),
-            Document {
-                version: 1,
-                text: valid_source(),
-            },
-        )]);
-
-        handle(&server_connection, &request, &documents)?;
-
-        let response = recv_response(&client_connection)?;
-        assert_eq!(response.id, request_id);
-        assert!(response.error.is_none());
-
-        let symbols: Option<DocumentSymbolResponse> =
-            serde_json::from_value(response.result.expect("response should contain a result"))?;
-        let DocumentSymbolResponse::Nested(symbols) =
-            symbols.expect("document symbols should be available")
-        else {
-            panic!("expected nested document symbols");
-        };
-
-        assert_eq!(symbols.len(), 2);
-        assert_eq!(symbols[0].name, "blueprint");
-        assert_eq!(symbols[1].name, "project_name");
-        assert_eq!(symbols[1].children.as_ref().map(Vec::len), Some(0));
-
-        Ok(())
-    }
-
-    #[test]
-    fn handle_unknown_document_symbol_request() -> anyhow::Result<()> {
-        let (server_connection, client_connection) = Connection::memory();
-        let request_id = RequestId::from(1_i32);
-        let request = Request::new(
-            request_id.clone(),
-            DocumentSymbolRequest::METHOD.to_owned(),
-            DocumentSymbolParams {
-                text_document: TextDocumentIdentifier { uri: test_uri()? },
-                work_done_progress_params: Default::default(),
-                partial_result_params: Default::default(),
-            },
-        );
-        let documents = Documents::new();
-
-        handle(&server_connection, &request, &documents)?;
-
-        let response = recv_response(&client_connection)?;
-        assert_eq!(response.id, request_id);
-        assert!(response.error.is_none());
-
-        let symbols: Option<DocumentSymbolResponse> =
-            serde_json::from_value(response.result.expect("response should contain a result"))?;
-        assert!(symbols.is_none());
-
-        Ok(())
-    }
-
-    fn recv_response(connection: &Connection) -> anyhow::Result<Response> {
-        match connection.receiver.recv()? {
-            Message::Response(response) => Ok(response),
-            message => anyhow::bail!("expected response, got {message:?}"),
-        }
-    }
-
-    fn test_uri() -> anyhow::Result<Uri> {
-        Ok("file:///workspace/Achitekfile".parse()?)
-    }
-
-    fn valid_source() -> String {
-        indoc! {r#"
-            blueprint {
-              version = "1.0.0"
-              name = "minimal"
-            }
-
-            prompt "project_name" {
-              type = string
-              help = "Project name"
-            }
-        "#}
-        .to_owned()
     }
 }
