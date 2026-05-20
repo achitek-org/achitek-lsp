@@ -22,5 +22,8 @@ mod prepare_rename;
 #[path = "features/selection_range.rs"]
 mod selection_range;
 
+#[path = "features/workspace_symbol.rs"]
+mod workspace_symbol;
+
 #[path = "utils.rs"]
 mod utils;

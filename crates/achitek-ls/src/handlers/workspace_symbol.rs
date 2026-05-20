@@ -5,9 +5,6 @@
 //! Clients send this request when the user searches for symbols across the
 //! workspace. This handler searches the server's in-memory Achitek documents
 //! and returns prompt symbols whose names match the query.
-
-#[cfg(test)]
-use crate::server::{Document, Documents};
 use crate::{editor, server::ServerState};
 use anyhow::Context;
 use lsp_types::{
@@ -72,92 +69,5 @@ fn to_lsp_position(position: achitekfile::TextPosition) -> Position {
     Position {
         line: u32::try_from(position.line).expect("line should fit into u32"),
         character: u32::try_from(position.byte).expect("column should fit into u32"),
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use indoc::indoc;
-    use lsp_server::{Connection, Message, Request, RequestId, Response};
-    use lsp_types::request::{Request as LspRequest, WorkspaceSymbolRequest};
-
-    fn handle(
-        connection: &Connection,
-        request: &Request,
-        documents: &Documents,
-    ) -> anyhow::Result<()> {
-        let params = serde_json::from_value(request.params.clone())?;
-        let state = ServerState {
-            documents: documents.clone(),
-            ..Default::default()
-        };
-        let result = super::handle(&state, params)?;
-        connection.sender.send(Message::Response(Response::new_ok(
-            request.id.clone(),
-            result,
-        )))?;
-        Ok(())
-    }
-
-    #[test]
-    fn handle_workspace_symbol_request() -> anyhow::Result<()> {
-        let (server_connection, client_connection) = Connection::memory();
-        let uri = test_uri()?;
-        let request_id = RequestId::from(1_i32);
-        let request = Request::new(
-            request_id.clone(),
-            WorkspaceSymbolRequest::METHOD.to_owned(),
-            WorkspaceSymbolParams {
-                query: "project".to_owned(),
-                work_done_progress_params: Default::default(),
-                partial_result_params: Default::default(),
-            },
-        );
-        let documents = Documents::from([(
-            uri.as_str().to_owned(),
-            Document {
-                version: 1,
-                text: source(),
-            },
-        )]);
-
-        handle(&server_connection, &request, &documents)?;
-
-        let response = recv_response(&client_connection)?;
-        let result: Option<WorkspaceSymbolResponse> =
-            serde_json::from_value(response.result.expect("response should contain a result"))?;
-        let Some(WorkspaceSymbolResponse::Flat(symbols)) = result else {
-            panic!("expected flat workspace symbols");
-        };
-        assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].name, "project_name");
-
-        Ok(())
-    }
-
-    fn recv_response(connection: &Connection) -> anyhow::Result<Response> {
-        match connection.receiver.recv()? {
-            Message::Response(response) => Ok(response),
-            message => anyhow::bail!("expected response, got {message:?}"),
-        }
-    }
-
-    fn test_uri() -> anyhow::Result<Uri> {
-        Ok("file:///workspace/Achitekfile".parse()?)
-    }
-
-    fn source() -> String {
-        indoc! {r#"
-            blueprint {
-              version = "1.0.0"
-              name = "minimal"
-            }
-
-            prompt "project_name" {
-              type = string
-            }
-        "#}
-        .to_owned()
     }
 }
