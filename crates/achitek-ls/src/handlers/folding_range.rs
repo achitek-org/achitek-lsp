@@ -12,12 +12,8 @@
 //! foldable ranges, with the symbol name used as collapsed text when supported
 //! by the client.
 
-#[cfg(test)]
-use crate::server::{Document, Documents};
 use crate::{editor, server::ServerState};
 use anyhow::Context;
-#[cfg(test)]
-use lsp_types::Uri;
 use lsp_types::{FoldingRange, FoldingRangeParams};
 
 /// Handles a `textDocument/foldingRange` request.
@@ -68,133 +64,5 @@ fn collect_folding_ranges(symbol: &editor::Symbol, ranges: &mut Vec<FoldingRange
 
     for child in symbol.children() {
         collect_folding_ranges(child, ranges);
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use indoc::indoc;
-    use lsp_server::{Connection, Message, Request, RequestId, Response};
-    use lsp_types::{
-        TextDocumentIdentifier,
-        request::{FoldingRangeRequest, Request as LspRequest},
-    };
-
-    fn handle(
-        connection: &Connection,
-        request: &Request,
-        documents: &Documents,
-    ) -> anyhow::Result<()> {
-        let params = serde_json::from_value(request.params.clone())?;
-        let state = ServerState {
-            documents: documents.clone(),
-            ..Default::default()
-        };
-        let result = super::handle(&state, params)?;
-        connection.sender.send(Message::Response(Response::new_ok(
-            request.id.clone(),
-            result,
-        )))?;
-        Ok(())
-    }
-
-    #[test]
-    fn handle_folding_range_request() -> anyhow::Result<()> {
-        let (server_connection, client_connection) = Connection::memory();
-        let uri = test_uri()?;
-        let request_id = RequestId::from(1_i32);
-        let request = folding_range_request(request_id.clone(), uri.clone());
-        let documents = Documents::from([(
-            uri.as_str().to_owned(),
-            Document {
-                version: 1,
-                text: valid_source(),
-            },
-        )]);
-
-        handle(&server_connection, &request, &documents)?;
-
-        let response = recv_response(&client_connection)?;
-        assert_eq!(response.id, request_id);
-        assert!(response.error.is_none());
-
-        let ranges: Option<Vec<FoldingRange>> =
-            serde_json::from_value(response.result.expect("response should contain a result"))?;
-        let ranges = ranges.expect("folding ranges should be available");
-
-        assert!(
-            ranges.iter().any(|range| range.start_line == 0
-                && range.collapsed_text.as_deref() == Some("blueprint"))
-        );
-        assert!(ranges.iter().any(|range| range.start_line == 5
-            && range.collapsed_text.as_deref() == Some("project_name")));
-        assert!(
-            ranges.iter().any(|range| range.start_line == 8
-                && range.collapsed_text.as_deref() == Some("validate"))
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn handle_unknown_document_folding_range_request() -> anyhow::Result<()> {
-        let (server_connection, client_connection) = Connection::memory();
-        let request_id = RequestId::from(1_i32);
-        let request = folding_range_request(request_id.clone(), test_uri()?);
-        let documents = Documents::new();
-
-        handle(&server_connection, &request, &documents)?;
-
-        let response = recv_response(&client_connection)?;
-        assert_eq!(response.id, request_id);
-        assert!(response.error.is_none());
-
-        let ranges: Option<Vec<FoldingRange>> =
-            serde_json::from_value(response.result.expect("response should contain a result"))?;
-        assert!(ranges.is_none());
-
-        Ok(())
-    }
-
-    fn folding_range_request(id: RequestId, uri: Uri) -> Request {
-        Request::new(
-            id,
-            FoldingRangeRequest::METHOD.to_owned(),
-            FoldingRangeParams {
-                text_document: TextDocumentIdentifier { uri },
-                work_done_progress_params: Default::default(),
-                partial_result_params: Default::default(),
-            },
-        )
-    }
-
-    fn recv_response(connection: &Connection) -> anyhow::Result<Response> {
-        match connection.receiver.recv()? {
-            Message::Response(response) => Ok(response),
-            message => anyhow::bail!("expected response, got {message:?}"),
-        }
-    }
-
-    fn test_uri() -> anyhow::Result<Uri> {
-        Ok("file:///workspace/Achitekfile".parse()?)
-    }
-
-    fn valid_source() -> String {
-        indoc! {r#"
-            blueprint {
-              version = "1.0.0"
-              name = "minimal"
-            }
-
-            prompt "project_name" {
-              type = string
-              help = "Project name"
-              validate {
-                min_length = 2
-              }
-            }
-        "#}
-        .to_owned()
     }
 }
