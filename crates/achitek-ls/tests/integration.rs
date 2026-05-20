@@ -13,5 +13,8 @@ mod formatting;
 #[path = "features/hover.rs"]
 mod hover;
 
+#[path = "features/selection_range.rs"]
+mod selection_range;
+
 #[path = "utils.rs"]
 mod utils;
